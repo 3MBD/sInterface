@@ -9,6 +9,8 @@ local gettingSet = false
 local function AdjustSetPoint(self,...)
 	if gettingSet then return end
 	gettingSet = true
+	-- the frame manager anchors the tracker with more than one point
+	self:ClearAllPoints()
 	self:SetPoint(unpack(E:C('objectivetracker', 'pos')))
 	gettingSet = false
 end

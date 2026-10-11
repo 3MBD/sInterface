@@ -1,6 +1,8 @@
 local _, ns = ...
 local C = ns.C
 
+local GetItemName = C_Item.GetItemNameByID
+
 C["coolbar"] = {
 	enabled = true,
 	width = 160,
@@ -8,8 +10,8 @@ C["coolbar"] = {
 	oocTransparency = 0.3,
 	pos = { "TOP", "oUF_sInterfacePlayer", "BOTTOM", 0, -50 },
 	disabled = {
-		[GetItemInfo(6948) or "Hearthstone"] = true,
-		[GetItemInfo(110560) or "Garrison Hearthstone"] = true,
+		[GetItemName(6948) or "Hearthstone"] = true,
+		[GetItemName(110560) or "Garrison Hearthstone"] = true,
 	}
 }
 

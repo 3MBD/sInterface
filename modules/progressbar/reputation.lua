@@ -35,17 +35,25 @@ reactions[MAX_REPUTATION_REACTION + 1] = {0, 0.5, 0.9}
 
 local function GetReputation()
 	local pendingReward
-	local name, standingID, min, max, cur, factionID = GetWatchedFactionInfo()
+	local watched = C_Reputation.GetWatchedFactionData()
+	if (not watched) or (watched.factionID == 0) then return end
 
-	local friendID, _, _, _, _, _, standingText, _, nextThreshold = GetFriendshipReputation(factionID)
-	if (friendID) then
-		if (not nextThreshold) then
+	local name, standingID, factionID = watched.name, watched.reaction, watched.factionID
+	local min, max, cur = watched.currentReactionThreshold, watched.nextReactionThreshold, watched.currentStanding
+	local standingText
+
+	local friendship = C_GossipInfo.GetFriendshipReputation(factionID)
+	if (friendship and friendship.friendshipFactionID > 0) then
+		standingText = friendship.reaction
+		if (not friendship.nextThreshold) then
 			min, max, cur = 0, 1, 1 -- force a full bar when maxed out
+		else
+			min, max, cur = friendship.reactionThreshold, friendship.nextThreshold, friendship.standing
 		end
 		standingID = 5 -- force friends' color
-	else
+	elseif C_Reputation.GetFactionParagonInfo then
 		local value, paragonNextThreshold, _, hasRewardPending = C_Reputation.GetFactionParagonInfo(factionID)
-		if (value) then
+		if (value and paragonNextThreshold) then
 			cur = value % paragonNextThreshold
 			min = 0
 			max = paragonNextThreshold
@@ -84,15 +92,9 @@ local function Enable(bar)
 	Update(bar)
 end
 
-local function reputationVisibility(self, selectedFactionIndex)
-	local shouldEnable
-	if (selectedFactionIndex ~= nil) then
-		if (selectedFactionIndex > 0) and (selectedFactionIndex <= GetNumFactions()) then
-			shouldEnable = true
-		end
-	elseif (not not (GetWatchedFactionInfo())) then
-		shouldEnable = true
-	end
+local function reputationVisibility(self)
+	local watched = C_Reputation.GetWatchedFactionData()
+	local shouldEnable = watched and (watched.factionID ~= 0)
 
 	if (shouldEnable) then
 		Enable(self.Reputation)
@@ -106,8 +108,10 @@ end
 local reputationHolder = ProgressBars:CreateBar(barName)
 reputationHolder:SetHeight(E:C('progressbars', 'reputation', 'height'))
 reputationHolder:SetScript("OnEvent", reputationVisibility)
-hooksecurefunc('SetWatchedFactionIndex', function(selectedFactionIndex)
-	reputationVisibility(reputationHolder, selectedFactionIndex or 0)
+-- the watched faction changes through C_Reputation now; UPDATE_FACTION follows every change
+reputationHolder:RegisterEvent("UPDATE_FACTION")
+hooksecurefunc(C_Reputation, 'SetWatchedFactionByIndex', function()
+	reputationVisibility(reputationHolder)
 end)
 
 local reputation = CreateFrame("StatusBar", "ProgressBar", reputationHolder, "AnimatedStatusBarTemplate")
@@ -117,7 +121,7 @@ reputation:SetStatusBarTexture(E:C('general', 'texture'), "ARTWORK")
 reputation:SetScript("OnEvent", Update)
 reputationHolder.Reputation = reputation
 C_Timer.After(1, function()
-	reputationVisibility(reputationHolder, nil)
+	reputationVisibility(reputationHolder)
 end)
 
 local tooltip = GameTooltip

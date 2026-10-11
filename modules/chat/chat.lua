@@ -15,7 +15,7 @@ ChatFrameToggleVoiceMuteButton:Hide()
 ChatFrameChannelButton:HookScript("OnShow", ChatFrameMenuButton.Hide)
 ChatFrameChannelButton:Hide()
 
-QuickJoinToastButton:HookScript("OnShoW", QuickJoinToastButton.Hide)
+QuickJoinToastButton:HookScript("OnShow", QuickJoinToastButton.Hide)
 QuickJoinToastButton:Hide()
 
 hooksecurefunc("FCFTab_UpdateColors", function(self, selected)
@@ -30,14 +30,19 @@ hooksecurefunc("FCFTab_UpdateColors", function(self, selected)
 	end
 end)
 
+local tabTextures = {
+	"Left", "Middle", "Right",
+	"ActiveLeft", "ActiveMiddle", "ActiveRight",
+	"HighlightLeft", "HighlightMiddle", "HighlightRight",
+}
+
 local function style(self)
 	if not self or self.styled then return end
 
 	local name = self:GetName()
 
 	self:SetClampRectInsets(0, 0, 0, 0)
-	self:SetMaxResize(UIParent:GetWidth(), UIParent:GetHeight())
-	self:SetMinResize(100, 50)
+	self:SetResizeBounds(100, 50, UIParent:GetWidth(), UIParent:GetHeight())
 	local font, _, flags = ChatFontNormal:GetFont()
 	self:SetFont(font, E:C('chat', 'fontSize'), flags)
 
@@ -66,15 +71,9 @@ local function style(self)
 	eb:SetPoint("LEFT", self, -5, 0)
 	eb:SetPoint("RIGHT", self, 10, 0)
 
-	_G[name.."TabLeft"]:SetTexture(nil)
-	_G[name.."TabMiddle"]:SetTexture(nil)
-	_G[name.."TabRight"]:SetTexture(nil)
-	_G[name.."TabSelectedLeft"]:SetTexture(nil)
-	_G[name.."TabSelectedMiddle"]:SetTexture(nil)
-	_G[name.."TabSelectedRight"]:SetTexture(nil)
-	_G[name.."TabHighlightLeft"]:SetTexture(nil)
-	_G[name.."TabHighlightMiddle"]:SetTexture(nil)
-	_G[name.."TabHighlightRight"]:SetTexture(nil)
+	for _, key in ipairs(tabTextures) do
+		tab[key]:SetTexture(nil)
+	end
 	_G[name.."TopTexture"]:SetTexture(nil)
 	_G[name.."RightTexture"]:SetTexture(nil)
 	_G[name.."BottomTexture"]:SetTexture(nil)
@@ -97,23 +96,23 @@ hooksecurefunc("FCF_OpenTemporaryWindow", function()
 	end
 end)
 
-hooksecurefunc("FloatingChatFrame_Update", function()
-	FCF_SetLocked(ChatFrame1, false)
-
+-- The general chat frame is an Edit Mode system: its position and size are owned by Edit Mode
+-- (and it is meant to stay locked), so re-apply sInterface's placement after Edit Mode applies its own.
+local function placeChatFrame1()
 	ChatFrame1:ClearAllPoints()
 	ChatFrame1:SetPoint(unpack(E:C('chat', 'position')))
-	ChatFrame1:SetUserPlaced(true)
 	ChatFrame1:SetHeight(E:C('chat', 'height'))
 	ChatFrame1:SetWidth(E:C('chat', 'width'))
+end
 
-	FCF_SetLocked(ChatFrame1, true)
-end)
+hooksecurefunc("FloatingChatFrame_Update", placeChatFrame1)
+hooksecurefunc(ChatFrame1, "UpdateSystem", placeChatFrame1)
 
+-- class coloured names in every chat type. Blizzard reads this setting itself; writing
+-- colorNameByClass into ChatTypeInfo would taint chat message formatting
 local function ColourByClass()
-	local cti = getmetatable(ChatTypeInfo).__index
-	for _, v in pairs(cti) do
-		v.colorNameByClass = true
-	end
+	-- "0" shows class colours for every chat type (ChatFrameUtil.ShouldColorChatByClass)
+	SetCVar("chatClassColorOverride", "0")
 end
 
 local ChatLogin = CreateFrame('Frame', nil)

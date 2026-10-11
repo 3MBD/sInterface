@@ -66,10 +66,15 @@ function E:RegisterAlphaAnimation(frame)
 end
 
 function E:PlayerIsTank()
+	-- Blizzard's helper also understands talent-tab specialization systems (WoW: Forever)
+	if PlayerUtil and PlayerUtil.IsPlayerEffectivelyTank then
+		return PlayerUtil.IsPlayerEffectivelyTank() and true or false
+	end
+
 	local assignedRole = UnitGroupRolesAssigned("player")
 	if (assignedRole == "NONE") then
-		local spec = GetSpecialization()
-		return spec and GetSpecializationRole(spec) == "TANK"
+		local spec = C_SpecializationInfo.GetSpecialization()
+		return spec and GetSpecializationRole(spec) == "TANK" or false
 	end
 
 	return assignedRole == "TANK"

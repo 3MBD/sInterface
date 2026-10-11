@@ -9,7 +9,8 @@ local barName = "experience"
 local function playerMaxLevel()
 	local levelRestriction = GetRestrictedAccountData()
 
-	return ((levelRestriction > 0) and levelRestriction or MAX_PLAYER_LEVEL)
+	-- MAX_PLAYER_LEVEL is not defined on current clients
+	return ((levelRestriction > 0) and levelRestriction or GameRulesUtil.GetEffectiveMaxLevelForPlayer())
 end
 
 local function  getExperienceCurrent()
@@ -29,7 +30,12 @@ end
 -- end
 
 local function getRested()
-	return (IsWatchingHonorAsXP() and GetHonorExhaustion or GetXPExhaustion)() or 0
+	-- honor has no rested bonus any more (GetHonorExhaustion was removed)
+	if IsWatchingHonorAsXP() then
+		return 0
+	end
+
+	return GetXPExhaustion() or 0
 end
 
 local function Update(bar)

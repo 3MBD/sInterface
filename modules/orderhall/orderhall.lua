@@ -9,10 +9,13 @@ orderhall:RegisterEvent('ADDON_LOADED')
 orderhall:SetScript('OnEvent', function(self, event, ...)
 	local addonname = ...
 	if (addonname == "Blizzard_OrderHallUI") then
+		-- WoW: Forever's Blizzard_OrderHallUI has no command bar
 		local b = OrderHallCommandBar
-		b:UnregisterAllEvents()
-		b:SetScript("OnShow", b.Hide)
-		b:Hide()
+		if b then
+			b:UnregisterAllEvents()
+			b:SetScript("OnShow", b.Hide)
+			b:Hide()
+		end
 		self:UnregisterAllEvents()
 	end
 end)

@@ -141,12 +141,27 @@ local function skin()
 	end
 end
 
+-- Details! internals this skin relies on; versions without them are left unskinned
+local function detailsSupported()
+	return Details and Details.CriarInstancia and Details.SetFontFace and Details.InstanceRefreshRows
+		and Details.ToggleWindow and Details.ListInstances and Details.GetInstance
+		and Details.SelectNumericalSystem and Details.SetUseAnimations and Details.SetWindowUpdateSpeed
+end
+
 local sInterfaceDetailsSkin = CreateFrame("frame", addon.."DetailsSkin")
 
-if IsAddOnLoaded("Details") then
+local function load()
+	if not detailsSupported() then
+		print("|cff00ffffsInterface|r: this version of Details! is not supported by the Details skin")
+		return
+	end
 	skin()
 	resizeInstance(Details:GetInstance(1))
 	sInterfaceDetailsSkin:RegisterEvent("GROUP_ROSTER_UPDATE")
+end
+
+if C_AddOns.IsAddOnLoaded("Details") then
+	load()
 else
 	sInterfaceDetailsSkin:RegisterEvent('ADDON_LOADED')
 end
@@ -157,9 +172,8 @@ sInterfaceDetailsSkin:SetScript("OnEvent", function(self, event, ...)
 	elseif event == "ADDON_LOADED" then
 		local addonname = ...
 		if (addonname == "Details") then
-			skin()
-			resizeInstance(Details:GetInstance(1))
-			sInterfaceDetailsSkin:RegisterEvent("GROUP_ROSTER_UPDATE")
+			self:UnregisterEvent("ADDON_LOADED")
+			load()
 		end
 	end
 end)

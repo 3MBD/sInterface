@@ -16,7 +16,7 @@ local function updateBuffFrameAnchor()
 	if (Minimap:IsShown()) then
 		sInterfaceBuffFrame:SetPoint("TOPRIGHT", Minimap, "TOPLEFT", E:C('auras', 'spacing'), 0);
 	else
-		sInterfaceBuffFrame:SetPoint("TOPRIGHT", sInterfaceFrame, "TOPRIGHT", -E:C('general', 'edgeSpacing'), -E:C('general', 'edgeSpacing'));
+		sInterfaceBuffFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -E:C('general', 'edgeSpacing'), -E:C('general', 'edgeSpacing'));
 	end
 end
 updateBuffFrameAnchor()
@@ -24,96 +24,126 @@ updateBuffFrameAnchor()
 Minimap:HookScript("OnHide", updateBuffFrameAnchor)
 Minimap:HookScript("OnShow", updateBuffFrameAnchor)
 
+-- Since 10.0 player auras are unnamed buttons (BuffFrame.auraFrames, DebuffFrame.auraFrames)
+-- that Blizzard sizes and lays out on a grid. Blizzard's frames and Edit Mode are left alone;
+-- the buttons are restyled and re-anchored to sInterfaceBuffFrame after every Blizzard update.
 local function style(aura)
-	if not aura or (aura and aura.styled) then return end
+	if not aura then return end
 
-	local name = aura:GetName()
-	local icon = _G[name.."Icon"]
-	icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+	local icon = aura.Icon
+	local duration = aura.Duration
 
-	local border = _G[name.."Border"]
-	if border then border:SetAlpha(0) end
-
+	aura:SetScale(1)
 	aura:SetSize(size, size)
 
-	aura.duration:SetParent(aura)
-	aura.duration:SetPoint("TOP", aura, "BOTTOM", 0, 6)
-	aura.duration:SetJustifyH("CENTER")
-	aura.duration:SetFontObject("GameFontNormalOutline")
+	icon:ClearAllPoints()
+	icon:SetAllPoints(aura)
+
+	duration:ClearAllPoints()
+	duration:SetPoint("TOP", aura, "BOTTOM", 0, 6)
+
+	if aura.styled then return end
+
+	icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+
+	if aura.DebuffBorder then aura.DebuffBorder:SetAlpha(0) end
+	if aura.TempEnchantBorder then aura.TempEnchantBorder:SetAlpha(0) end
+
+	duration:SetParent(aura)
+	duration:SetJustifyH("CENTER")
+	duration:SetFontObject("GameFontNormalOutline")
 
 	E:ShadowedBorder(aura)
 
 	aura.styled = true
 end
 
-local function updateBuffAnchors()
-	local previousBuff, aboveBuff
-
-	local buffs = {}
-
-	for i = 1, BuffFrame.numEnchants do
-		local buff = _G["TempEnchant"..i]
-		if not buff then return end
-		if buff:IsShown() then
-			table.insert(buffs, buff)
-		end
-	end
-
-	for i = 1, BUFF_ACTUAL_DISPLAY do
-		local buff = _G["BuffButton"..i]
-		if not buff then return end
-		if buff:IsShown() then
-			table.insert(buffs, buff)
-		end
-	end
-
-	for i, buff in next, buffs do
-		style(buff)
-
-		buff:ClearAllPoints()
+local function anchorRows(auras, firstPoint, firstRelative, firstRelativePoint, firstX, firstY)
+	local previousAura, aboveAura
+	for i, aura in ipairs(auras) do
+		aura:ClearAllPoints()
 
 		if i > 1 and mod(i, max_per_row) == 1 then
-			buff:SetPoint("TOPRIGHT", aboveBuff, "BOTTOMRIGHT", 0, spacing*2)
-			aboveBuff = buff
+			aura:SetPoint("TOPRIGHT", aboveAura, "BOTTOMRIGHT", 0, spacing*2)
+			aboveAura = aura
 		elseif i == 1 then
-			buff:SetPoint("TOPRIGHT", sInterfaceBuffFrame, "TOPRIGHT", 0, 0)
-			aboveBuff = buff
+			aura:SetPoint(firstPoint, firstRelative, firstRelativePoint, firstX, firstY)
+			aboveAura = aura
 		else
-			buff:SetPoint("RIGHT", previousBuff, "LEFT", spacing, 0)
+			aura:SetPoint("RIGHT", previousAura, "LEFT", spacing, 0)
 		end
-		previousBuff = buff
+		previousAura = aura
 	end
 end
+
+local buffs = {}
+
+local function updateBuffAnchors()
+	wipe(buffs)
+
+	if BuffFrame.ConsolidatedBuffs and BuffFrame.ConsolidatedBuffs:IsShown() then
+		table.insert(buffs, BuffFrame.ConsolidatedBuffs)
+	end
+	for _, aura in ipairs(BuffFrame.auraFrames) do
+		if aura:IsShown() and not aura.isAuraAnchor then
+			table.insert(buffs, aura)
+		end
+	end
+
+	for _, buff in ipairs(buffs) do
+		style(buff)
+	end
+	anchorRows(buffs, "TOPRIGHT", sInterfaceBuffFrame, "TOPRIGHT", 0, 0)
+
+	local collapse = BuffFrame.CollapseAndExpandButton
+	if collapse then
+		collapse:ClearAllPoints()
+		collapse:SetPoint("TOPRIGHT", sInterfaceBuffFrame, "TOPLEFT", spacing, 0)
+	end
+end
+
+local debuffs = {}
 
 local function updateDebuffAnchors()
-	local debuff, previousDebuff, aboveDebuff
-	for i = 1, DEBUFF_MAX_DISPLAY do
-		debuff = _G["DebuffButton"..i]
-		if not debuff then return end
-		style(debuff)
+	wipe(debuffs)
 
-		if i > 1 and mod(i, max_per_row) == 1 then
-			debuff:SetPoint("TOPRIGHT", aboveDebuff, "BOTTOMRIGHT", 0, spacing*2)
-			aboveDebuff = debuff
-		elseif i ==1 then
-			if BUFF_ACTUAL_DISPLAY == 0 then
-				debuff:SetPoint("TOPRIGHT", sInterfaceBuffFrame, "TOPRIGHT", 0, 0)
-			else
-				local anchorIndex, anchor, modulo, ab
-				modulo = BUFF_ACTUAL_DISPLAY % max_per_row
-				ab = abs(modulo - 1)
-				anchorIndex = modulo == 0 and (BUFF_ACTUAL_DISPLAY - (max_per_row - 1)) or (BUFF_ACTUAL_DISPLAY - ab)
-				anchor = _G["BuffButton"..anchorIndex]
-				debuff:ClearAllPoints()
-				debuff:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, spacing*6)
-			end
-			aboveDebuff = debuff
-		else
-			debuff:SetPoint("RIGHT", previousDebuff, "LEFT", spacing, 0)
+	-- private aura anchors follow the visible debuffs, as in the default layout
+	local anchors = {}
+	for _, aura in ipairs(DebuffFrame.auraFrames) do
+		if aura.isAuraAnchor then
+			table.insert(anchors, aura)
+		elseif aura:IsShown() then
+			style(aura)
+			table.insert(debuffs, aura)
 		end
-		previousDebuff = debuff
+	end
+	for _, anchor in ipairs(anchors) do
+		table.insert(debuffs, anchor)
+	end
+
+	local numBuffs = #buffs
+	if numBuffs == 0 then
+		anchorRows(debuffs, "TOPRIGHT", sInterfaceBuffFrame, "TOPRIGHT", 0, 0)
+	else
+		-- below the first buff of the last row
+		local anchor = buffs[(math.floor((numBuffs - 1) / max_per_row) * max_per_row) + 1]
+		anchorRows(debuffs, "TOPRIGHT", anchor, "BOTTOMRIGHT", 0, spacing*6)
 	end
 end
 
-hooksecurefunc("BuffFrame_UpdateAllBuffAnchors", updateBuffAnchors)
-hooksecurefunc("DebuffButton_UpdateAnchors", updateDebuffAnchors)
+local function updateAllAnchors()
+	updateBuffAnchors()
+	updateDebuffAnchors()
+end
+
+if not (BuffFrame and BuffFrame.auraFrames and DebuffFrame and DebuffFrame.auraFrames) then
+	print("|cff00ffffsInterface|r: the default buff frame has an unexpected layout; buffs keep their default position")
+	return
+end
+
+hooksecurefunc(BuffFrame, "UpdateAuraButtons", updateAllAnchors)
+hooksecurefunc(BuffFrame, "UpdateGridLayout", updateAllAnchors)
+hooksecurefunc(BuffFrame, "UpdateAuraContainerAnchor", updateBuffAnchors)
+hooksecurefunc(DebuffFrame, "UpdateAuraButtons", updateDebuffAnchors)
+hooksecurefunc(DebuffFrame, "UpdateGridLayout", updateDebuffAnchors)
+updateAllAnchors()

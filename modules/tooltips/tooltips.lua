@@ -6,6 +6,16 @@ if not E:C('tooltips', 'enabled') then return end
 local unpack, type = unpack, type
 local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 local GameTooltip = GameTooltip
+local issecretvalue = issecretvalue or function() return false end
+
+-- Unit names, races, creature types and tooltip lines can be secret values on
+-- WoW: Forever (always for NPCs). Lines built from them are left as Blizzard wrote them.
+local function anySecret(...)
+	for i = 1, select('#', ...) do
+		if issecretvalue((select(i, ...))) then return true end
+	end
+	return false
+end
 
 GameTooltipStatusBar:ClearAllPoints()
 GameTooltipStatusBar:Hide()
@@ -55,14 +65,23 @@ local left = setmetatable({}, { __index = function(left, i)
 	return line
 end })
 
-GameTooltip:HookScript("OnTooltipSetUnit", function(self, ...)
-	local unit = select(2, self:GetUnit()) or (GetMouseFocus() and GetMouseFocus():GetAttribute("unit")) or (UnitExists("mouseover") and "mouseover")
-	if not unit then return end
+local function GetMouseFocusUnit()
+	local focus = GetMouseFoci()[1]
+	if focus and focus.GetAttribute then
+		return focus:GetAttribute("unit")
+	end
+end
+
+local function OnTooltipSetUnit(self, ...)
+	local unit = select(2, self:GetUnit()) or GetMouseFocusUnit() or (UnitExists("mouseover") and "mouseover")
+	if not unit or issecretvalue(unit) then return end
 	local line = 1
 	if UnitIsPlayer(unit) then
 		local name, realm = UnitName(unit)
 		local _, unitClass = UnitClass(unit)
+		if anySecret(name, realm, unitClass) then return end
 		local classColor = RAID_CLASS_COLORS[unitClass]
+		if not classColor then return end
 
 		if realm then
 			left[line]:SetFormattedText("|cff%02x%02x%02x%s %s %s|r", classColor.r * 255, classColor.g * 255, classColor.b * 255, name, 'of', realm)
@@ -72,12 +91,13 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(self, ...)
 		line = line + 1
 
 		local guild = GetGuildInfo(unit)
-		if guild then
+		if guild and not issecretvalue(guild) and left[line] then
 			left[line]:SetFormattedText('|cff%02x%02x%02x%s|r', 255, 213, 131, guild)
 			line = line + 1
 		end
 
 		local level, race = UnitLevel(unit), UnitRace(unit)
+		if anySecret(level, race) or not left[line] then return end
 		local difficultyColor
 		level = level > 0 and level or '??'
 		if level == '??' then
@@ -92,24 +112,34 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(self, ...)
 		left[line]:SetText(name)
 		line = line + 1
 
-		local info = left[line]:GetText()
+		local info = left[line] and left[line]:GetText()
 		if not info then return GameTooltip:Show() end
+		if issecretvalue(info) then return end
 
 		if not strmatch(info, "Level") and not strmatch(info, "Pet Level") then
 			line = line + 1
 		end
 
 		local level, race = UnitLevel(unit), UnitCreatureType(unit)
+		if anySecret(level, race) or not left[line] then return end
 		level = level == -1 and '??' or level
 		local color = type(level) == 'number' and GetQuestDifficultyColor(level) or { r = 1, g = 0.5, b = 0.5 }
 		if level and race then
 			left[line]:SetFormattedText('|cff%02x%02x%02x%s|r %s', color.r * 255, color.g * 255, color.b * 255, level, race)
 		end
 	end
+end
+
+-- OnTooltipSetUnit was replaced by tooltip data post-calls in 10.0.2
+TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, ...)
+	if tooltip ~= GameTooltip then return end
+	OnTooltipSetUnit(tooltip, ...)
 end)
 
 
-local tooltips = { GameTooltip, ItemRefTooltip, ShoppingTooltip1, ShoppingTooltip2, ShoppingTooltip3, WorldMapTooltip, SmallTextTooltip }
+-- ShoppingTooltip3, WorldMapTooltip and SmallTextTooltip no longer exist
+local tooltips = { GameTooltip, ItemRefTooltip, ShoppingTooltip1, ShoppingTooltip2 }
+
 for _, tooltip in ipairs(tooltips) do
 	tooltip.style = CreateFrame("Frame", nil, tooltip, BackdropTemplateMixin and "BackdropTemplate" or nil)
 	tooltip.style:SetFrameLevel(tooltip:GetFrameLevel())
@@ -123,8 +153,14 @@ for _, tooltip in ipairs(tooltips) do
 
 	if (tooltip.style and tooltip.NineSlice) then
 		tooltip.NineSlice:Hide()
-		tooltip.NineSlice.Show = function() end
 	end
 
 	SetBackdropStyle(tooltip)
 end
+
+-- Blizzard re-shows the default border whenever a tooltip's style is (re)applied
+hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tooltip)
+	if tooltip.style and tooltip.NineSlice then
+		tooltip.NineSlice:Hide()
+	end
+end)
