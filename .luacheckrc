@@ -334,5 +334,7 @@ read_globals = {
 	"C_DurationUtil",
 	"C_ColorUtil",
 	"AbbreviateNumbers",
-	"BottomManagedFrameContainer"
+	"BottomManagedFrameContainer",
+	"Constants",
+	"GetCVar"
 }

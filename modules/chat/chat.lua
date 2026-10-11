@@ -3,45 +3,59 @@ local E = ns.E
 
 if not E:C('chat', 'enabled') then return end
 
-ChatFrameMenuButton:HookScript("OnShow", ChatFrameMenuButton.Hide)
-ChatFrameMenuButton:Hide()
+-- NUM_CHAT_WINDOWS only exists with the loadDeprecationFallbacks CVar
+local NUM_WINDOWS = Constants.ChatFrameConstants.MaxChatWindows
 
-ChatFrameToggleVoiceDeafenButton:HookScript("OnShow", ChatFrameMenuButton.Hide)
-ChatFrameToggleVoiceDeafenButton:Hide()
+local function KeepHidden(button)
+	if not button then return end
+	button:HookScript("OnShow", button.Hide)
+	button:Hide()
+end
 
-ChatFrameToggleVoiceMuteButton:HookScript("OnShow", ChatFrameMenuButton.Hide)
-ChatFrameToggleVoiceMuteButton:Hide()
-
-ChatFrameChannelButton:HookScript("OnShow", ChatFrameMenuButton.Hide)
-ChatFrameChannelButton:Hide()
-
-QuickJoinToastButton:HookScript("OnShow", QuickJoinToastButton.Hide)
-QuickJoinToastButton:Hide()
+KeepHidden(ChatFrameMenuButton)
+KeepHidden(ChatFrameToggleVoiceDeafenButton)
+KeepHidden(ChatFrameToggleVoiceMuteButton)
+KeepHidden(ChatFrameChannelButton)
+KeepHidden(QuickJoinToastButton)
 
 hooksecurefunc("FCFTab_UpdateColors", function(self, selected)
-	local string = self:GetFontString()
-	local font, size = string:GetFont()
-	string:SetFont(font, size, "OUTLINE")
+	local fs = self:GetFontString()
+	if not fs then return end
+	local font, size = fs:GetFont()
+	if font then
+		fs:SetFont(font, size, "OUTLINE")
+	end
 
 	if selected then
-		string:SetTextColor(1, 0.75, 0, 1)
+		fs:SetTextColor(1, 0.75, 0, 1)
 	else
-		string:SetTextColor(0.5, 0.5, 0.5, 1)
+		fs:SetTextColor(0.5, 0.5, 0.5, 1)
 	end
 end)
 
-local tabTextures = {
+-- the tab art textures are parentKeys now (they used to be ChatFrameNTabLeft etc.)
+local TAB_TEXTURE_KEYS = {
 	"Left", "Middle", "Right",
 	"ActiveLeft", "ActiveMiddle", "ActiveRight",
 	"HighlightLeft", "HighlightMiddle", "HighlightRight",
 }
+local FRAME_TEXTURE_NAMES = { "TopTexture", "RightTexture", "BottomTexture", "LeftTexture", "Background" }
+
+local function ClearTexture(texture)
+	if texture and texture.SetTexture then
+		texture:SetTexture(nil)
+	end
+end
+
+local styled = {}
 
 local function style(self)
-	if not self or self.styled then return end
+	if not self or styled[self] then return end
 
 	local name = self:GetName()
 
 	self:SetClampRectInsets(0, 0, 0, 0)
+	-- SetMinResize/SetMaxResize were replaced by SetResizeBounds
 	self:SetResizeBounds(100, 50, UIParent:GetWidth(), UIParent:GetHeight())
 	local font, _, flags = ChatFontNormal:GetFont()
 	self:SetFont(font, E:C('chat', 'fontSize'), flags)
@@ -60,6 +74,11 @@ local function style(self)
 	local bframe = _G[name.."ButtonFrame"]
 	bframe:Hide()
 	bframe:HookScript("OnShow", bframe.Hide)
+	-- the scroll bar (and with it the scroll-to-bottom button) moved out of the button frame
+	if self.ScrollBar then
+		self.ScrollBar:Hide()
+		self.ScrollBar:HookScript("OnShow", self.ScrollBar.Hide)
+	end
 
 	_G[name.."EditBoxLeft"]:Hide()
 	_G[name.."EditBoxMid"]:Hide()
@@ -71,19 +90,13 @@ local function style(self)
 	eb:SetPoint("LEFT", self, -5, 0)
 	eb:SetPoint("RIGHT", self, 10, 0)
 
-	for _, key in ipairs(tabTextures) do
-		tab[key]:SetTexture(nil)
-	end
-	_G[name.."TopTexture"]:SetTexture(nil)
-	_G[name.."RightTexture"]:SetTexture(nil)
-	_G[name.."BottomTexture"]:SetTexture(nil)
-	_G[name.."LeftTexture"]:SetTexture(nil)
-	_G[name.."Background"]:SetTexture(nil)
+	for _, key in ipairs(TAB_TEXTURE_KEYS) do ClearTexture(tab[key]) end
+	for _, suffix in ipairs(FRAME_TEXTURE_NAMES) do ClearTexture(_G[name..suffix]) end
 
-	self.styled = true
+	styled[self] = true
 end
 
-for i = 1, NUM_CHAT_WINDOWS do
+for i = 1, NUM_WINDOWS do
 	style(_G["ChatFrame"..i])
 end
 
@@ -96,23 +109,61 @@ hooksecurefunc("FCF_OpenTemporaryWindow", function()
 	end
 end)
 
--- The general chat frame is an Edit Mode system: its position and size are owned by Edit Mode
--- (and it is meant to stay locked), so re-apply sInterface's placement after Edit Mode applies its own.
-local function placeChatFrame1()
-	E:ClearAllPoints(ChatFrame1)
-	E:SetPoint(ChatFrame1, unpack(E:C('chat', 'position')))
-	ChatFrame1:SetHeight(E:C('chat', 'height'))
-	ChatFrame1:SetWidth(E:C('chat', 'width'))
+-- ChatFrame1 is an Edit Mode system: its position and size come from Edit Mode (and it stays
+-- locked), so sInterface's placement is re-applied afterwards with the original widget methods.
+-- Edit Mode's SetPoint/ClearAllPoints overrides would taint Edit Mode.
+local function PositionChatFrame1()
+	local f = ChatFrame1
+	E:ClearAllPoints(f)
+	E:SetPoint(f, unpack(E:C('chat', 'position')))
+	f:SetUserPlaced(true)
+	f:SetHeight(E:C('chat', 'height'))
+	f:SetWidth(E:C('chat', 'width'))
+	-- Edit Mode re-derives clamp insets from its selection frame on every layout apply
+	f:SetClampRectInsets(0, 0, 0, 0)
 end
 
-hooksecurefunc("FloatingChatFrame_Update", placeChatFrame1)
-hooksecurefunc(ChatFrame1, "UpdateSystem", placeChatFrame1)
+local deferFrame
+local function RequestPosition()
+	if InCombatLockdown() then
+		-- a protected frame snapped to ChatFrame1 in Edit Mode would make moving it a blocked action
+		if not deferFrame then
+			deferFrame = CreateFrame("Frame")
+			deferFrame:SetScript("OnEvent", function(self)
+				self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+				PositionChatFrame1()
+			end)
+		end
+		deferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+		return
+	end
+	PositionChatFrame1()
+end
 
--- class coloured names in every chat type. Blizzard reads this setting itself; writing
--- colorNameByClass into ChatTypeInfo would taint chat message formatting
+hooksecurefunc("FloatingChatFrame_Update", function(id)
+	RequestPosition()
+
+	-- UPDATE_CHAT_WINDOWS re-applies the client's saved chat font size just before this call
+	local frame = id and _G["ChatFrame"..id]
+	if frame and styled[frame] then
+		local font, _, flags = frame:GetFont()
+		if font then
+			frame:SetFont(font, E:C('chat', 'fontSize'), flags)
+		end
+	end
+end)
+
+-- Edit Mode layout apply re-anchors/resizes ChatFrame1 from the active layout
+hooksecurefunc(ChatFrame1, "UpdateSystem", RequestPosition)
+
+-- class coloured names in every chat type
 local function ColourByClass()
-	-- "0" shows class colours for every chat type (ChatFrameUtil.ShouldColorChatByClass)
-	SetCVar("chatClassColorOverride", "0")
+	-- "0" = always class-colour names (ChatFrameUtil.ShouldColorChatByClass). Writing
+	-- colorNameByClass into Blizzard's ChatTypeInfo would taint the secure chat handler, which
+	-- reads it for every message.
+	if GetCVar("chatClassColorOverride") ~= "0" then
+		SetCVar("chatClassColorOverride", "0")
+	end
 end
 
 local ChatLogin = CreateFrame('Frame', nil)

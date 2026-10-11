@@ -1,120 +1,126 @@
--- Chat lines can be secret values on WoW: Forever (dungeons, raids, encounters, PvP). Blizzard
--- builds them from the CHAT_*_GET format strings, so replacing those globals would taint that code
--- and break secret lines. Instead each finished, non-secret line is rewritten afterwards through the
--- chat frame's secure TransformMessages; secret lines keep the default format.
-local issecretvalue = issecretvalue or function() return false end
+-- NUM_CHAT_WINDOWS only exists with the loadDeprecationFallbacks CVar
+local NUM_WINDOWS = Constants.ChatFrameConstants.MaxChatWindows
 
-local formats = {
+-- sInterface's short message prefixes (unchanged values from the original file)
+local SHORT_FORMATS = {
 	--guild
-	GUILD = "|Hchannel:GUILD|hG|h %s ",
-	OFFICER = "|Hchannel:OFFICER|hO|h %s ",
-
+	CHAT_GUILD_GET = "|Hchannel:GUILD|hG|h %s ",
+	CHAT_OFFICER_GET = "|Hchannel:OFFICER|hO|h %s ",
 	--raid
-	RAID = "|Hchannel:RAID|hR|h %s ",
-	RAID_WARNING = "RW %s ",
-	RAID_LEADER = "|Hchannel:RAID|hR|h %s ",
-
+	CHAT_RAID_GET = "|Hchannel:RAID|hR|h %s ",
+	CHAT_RAID_WARNING_GET = "RW %s ",
+	CHAT_RAID_LEADER_GET = "|Hchannel:RAID|hR|h %s ",
 	--party
-	PARTY = "|Hchannel:PARTY|hP|h %s ",
-	PARTY_LEADER =  "|Hchannel:PARTY|hP|h %s ",
-	PARTY_GUIDE =  "|Hchannel:PARTY|hPG|h %s ",
-
+	CHAT_PARTY_GET = "|Hchannel:PARTY|hP|h %s ",
+	CHAT_PARTY_LEADER_GET =  "|Hchannel:PARTY|hP|h %s ",
+	CHAT_PARTY_GUIDE_GET =  "|Hchannel:PARTY|hPG|h %s ",
 	--instance
-	INSTANCE_CHAT = "|Hchannel:Battleground|hI|h %s: ",
-	INSTANCE_CHAT_LEADER = "|Hchannel:Battleground|hI|h %s: ",
-
+	CHAT_INSTANCE_CHAT_GET = "|Hchannel:Battleground|hI|h %s: ",
+	CHAT_INSTANCE_CHAT_LEADER_GET = "|Hchannel:Battleground|hI|h %s: ",
 	--whisper
-	WHISPER_INFORM = "to %s ",
-	WHISPER = "from %s ",
-	BN_WHISPER_INFORM = "to %s ",
-	BN_WHISPER = "from %s ",
-
+	CHAT_WHISPER_INFORM_GET = "to %s ",
+	CHAT_WHISPER_GET = "from %s ",
+	CHAT_BN_WHISPER_INFORM_GET = "to %s ",
+	CHAT_BN_WHISPER_GET = "from %s ",
 	--say / yell
-	SAY = "%s ",
-	YELL = "%s ",
+	CHAT_SAY_GET = "%s ",
+	CHAT_YELL_GET = "%s ",
 }
 
 --flags
-local flags = {
-	AFK = "[AFK] ",
-	DND = "[DND] ",
-	GM = "[GM] ",
+local SHORT_FLAGS = {
+	CHAT_FLAG_AFK = "[AFK] ",
+	CHAT_FLAG_DND = "[DND] ",
+	CHAT_FLAG_GM = "[GM] ",
 }
 
-local function toPattern(text)
-	return (text:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
+-- "|h[1. General - Zone]|h" -> "|h1|h"
+local CHANNEL_PATTERN, CHANNEL_REPL = '|h%[(%d+)%. .-%]|h', '|h%1|h'
+
+--[[ WoW: Forever (12.x engine):
+  Writing CHAT_*_GET / CHAT_FLAG_* globals or replacing ChatFrameN.AddMessage taints Blizzard's
+  ChatFrameMixin:MessageEventHandler. While C_ChatInfo.InChatMessagingLockdown() is true the
+  CHAT_MSG_* payload (text, sender, GUID) is secret, and the now-tainted handler errors on its own
+  secret comparisons / table keys (dropping the message, breaking /r). So nothing Blizzard-owned is
+  written here. Instead, lines that are already in the frame and are NOT secret are rewritten through
+  the frame's secure TransformMessages API from a hooksecurefunc post-hook. Secret lines (chat
+  lockdown) keep Blizzard's default formatting. ]]
+
+local issecretvalue = issecretvalue
+local strfind, strsub, gsub = string.find, string.sub, string.gsub
+
+local function EscapePattern(s)
+	return (gsub(s, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
 end
 
--- Blizzard's own format strings, read but never written, matched as patterns
-local prefixes = {}
-for chatType, format in pairs(formats) do
-	local default = _G["CHAT_"..chatType.."_GET"]
-	if type(default) == "string" and default:find("%s", 1, true) then
-		prefixes[chatType] = {
-			pattern = (toPattern(default):gsub("%%%%s", "(.-)", 1)),
-			format = format,
-		}
+local formatRules = {}   -- [chatType] = { pattern, replacement, leadingName }
+for key, short in pairs(SHORT_FORMATS) do
+	local orig = _G[key]   -- Blizzard's localized default; reading it does not taint it
+	if type(orig) == "string" and orig ~= short and strfind(orig, "%s", 1, true) then
+		local pattern = gsub(EscapePattern(orig), "%%%%s", "(.-)", 1)
+		local repl = gsub(gsub(short, "%%", "%%%%"), "%%%%s", "%%1", 1)
+		local chatType = key:match("^CHAT_(.+)_GET$")
+		local leadingName = strsub(orig, 1, 2) == "%s"
+		formatRules[chatType] = { (leadingName and "^" or "")..pattern, repl, leadingName }
 	end
 end
 
-local flagPatterns = {}
-for flag, short in pairs(flags) do
-	local default = _G["CHAT_FLAG_"..flag]
-	if type(default) == "string" and default ~= "" then
-		flagPatterns[toPattern(default)] = short
+local flagRules = {}   -- [specialFlag] = { plain, pattern, replacement }
+for key, short in pairs(SHORT_FLAGS) do
+	local orig = _G[key]
+	if type(orig) == "string" and orig ~= "" and orig ~= short then
+		flagRules[key:match("^CHAT_FLAG_(.+)$")] = { orig, EscapePattern(orig), (gsub(short, "%%", "%%%%")) }
 	end
 end
 
--- marks lines that have been looked at so each line is rewritten at most once
-local processed = {}
+-- For formats that start with the sender ("%s whispers: "), split off whatever Blizzard prepended
+-- (timestamp) so the short prefix lands after it, as it did when the global was replaced.
+local function SplitLead(text, flagRule)
+	local first = strfind(text, "|H", 1, true)
+	local p = flagRule and strfind(text, flagRule[1], 1, true)
+	if p and (not first or p < first) then first = p end
+	if not first or first == 1 then return "", text end
+	return strsub(text, 1, first - 1), strsub(text, first)
+end
 
-local function shouldTransform(message, ...)
-	if issecretvalue(message) or type(message) ~= "string" then return false end
-	local n = select('#', ...)
-	if n > 0 then
-		local last = select(n, ...)
-		if not issecretvalue(last) and last == processed then return false end
+local function Shorten(text, event, specialFlag)
+	local out = gsub(text, CHANNEL_PATTERN, CHANNEL_REPL)
+	local chatType = type(event) == "string" and strsub(event, 1, 9) == "CHAT_MSG_" and strsub(event, 10)
+	local flagRule = chatType and type(specialFlag) == "string" and flagRules[specialFlag]
+	local rule = chatType and formatRules[chatType]
+	if rule then
+		local lead, rest = "", out
+		if rule[3] then lead, rest = SplitLead(out, flagRule) end
+		local replaced, n = gsub(rest, rule[1], rule[2], 1)
+		if n > 0 then out = lead..replaced end
 	end
-	return true
-end
-
--- Blizzard puts the optional timestamp in front of the formatted line
-local function timestampLength()
-	local timestampFormat = ChatFrameUtil.GetTimestampFormat()
-	return timestampFormat and #TimeUtil.BetterDate(timestampFormat, time()) or 0
-end
-
--- extra values are the ones ChatFrame passes to AddMessage: id, accessID, typeID, event, ...
-local function transform(message, r, g, b, ...)
-	local event = select(4, ...)
-	local chatType = type(event) == "string" and not issecretvalue(event) and event:match("^CHAT_MSG_(.+)")
-	local prefix = chatType and prefixes[chatType]
-	if prefix then
-		local s, e, name = message:find(prefix.pattern, timestampLength() + 1)
-		if s then
-			for pattern, short in pairs(flagPatterns) do
-				name = name:gsub(pattern, short)
-			end
-			message = message:sub(1, s - 1) .. prefix.format:format(name) .. message:sub(e + 1)
-		end
+	if flagRule then
+		out = gsub(out, flagRule[2], flagRule[3], 1)
 	end
-
-	message = message:gsub('|h%[(%d+)%. .-%]|h', '|h%1|h')
-	return message, r, g, b, ...
+	return out
 end
 
-local function transformWithMarker(message, r, g, b, ...)
-	local n = select('#', ...)
-	local extra = { ... }
-	extra[n + 1] = processed
-	return transform(message, r, g, b, unpack(extra, 1, n + 1))
+local function OnAddMessage(frame, text, r, g, b, infoID, accessID, typeID, event, eventArgs)
+	if issecretvalue(text) or issecretvalue(event) or type(text) ~= "string" then return end
+	local specialFlag = type(eventArgs) == "table" and eventArgs[6] or nil
+	if issecretvalue(specialFlag) then specialFlag = nil end
+	local short = Shorten(text, event, specialFlag)
+	if short == text then return end
+	local done = false
+	frame:TransformMessages(function(message)
+		if done or issecretvalue(message) or message ~= text then return false end
+		done = true
+		return true
+	end, function(_, ...)
+		return short, ...
+	end)
 end
 
-for i = 1, NUM_CHAT_WINDOWS do
+for i = 1, NUM_WINDOWS do
 	if ( i ~= 2 ) then
 		local f = _G["ChatFrame"..i]
-		hooksecurefunc(f, "AddMessage", function(frame)
-			frame:TransformMessages(shouldTransform, transformWithMarker)
-		end)
+		if f and f.TransformMessages then
+			hooksecurefunc(f, "AddMessage", OnAddMessage)
+		end
 	end
 end

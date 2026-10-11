@@ -1,27 +1,35 @@
--- Chat frames scroll through ScrollUtil's OnMouseWheel handler; FloatingChatFrame_OnMouseScroll
--- is no longer used for them. Shift+wheel jumps to the top or bottom on top of the default scrolling.
-local function OnMouseWheel(self, dir)
-	if not IsShiftKeyDown() then return end
-
+local function OnMouseScroll(self, dir)
 	if(dir > 0) then
-		self:ScrollToTop()
+		if(IsShiftKeyDown()) then
+			self:ScrollToTop()
+		else
+			self:ScrollUp()
+		end
 	else
-		self:ScrollToBottom()
+		if(IsShiftKeyDown()) then
+			self:ScrollToBottom()
+		else
+			self:ScrollDown()
+		end
 	end
 end
 
-local function hook(frame)
-	if not frame or frame.__sInterfaceScroll then return end
-	frame:HookScript("OnMouseWheel", OnMouseWheel)
-	frame.__sInterfaceScroll = true
+-- Chat frames get a per-frame OnMouseWheel closure from ScrollUtil (only when the chatMouseScroll
+-- CVar is on); FloatingChatFrame_OnMouseScroll is no longer their handler. Replace the frame
+-- script instead of the Blizzard global, and only where Blizzard installed a wheel handler.
+local done = {}
+local function Apply(frame)
+	if frame and not done[frame] and frame:GetScript("OnMouseWheel") then
+		frame:SetScript("OnMouseWheel", OnMouseScroll)
+		done[frame] = true
+	end
 end
 
-for i = 1, NUM_CHAT_WINDOWS do
-	hook(_G["ChatFrame"..i])
+for _, name in pairs(CHAT_FRAMES) do
+	Apply(_G[name])
 end
-
 hooksecurefunc("FCF_OpenTemporaryWindow", function()
-	for _, chatFrameName in pairs(CHAT_FRAMES) do
-		hook(_G[chatFrameName])
+	for _, name in pairs(CHAT_FRAMES) do
+		Apply(_G[name])
 	end
 end)
