@@ -6,6 +6,13 @@ if not E:C('uf', 'enabled') then return end
 local oUF = ns.oUF or oUF
 local _, class = UnitClass('player')
 
+-- Unit health, power, cast and aura data can be secret values on this client: they may be
+-- passed to widget setters but not compared, used in arithmetic or boolean-tested.
+local issecretvalue = issecretvalue or function() return false end
+
+-- native StatusBar interpolation replaces the Lua-side oUF_Smooth plugin
+local SMOOTHING = Enum.StatusBarInterpolation.ExponentialEaseOut
+
 local CASTBAR_X_OFFSET = 0
 local CASTBAR_Y_OFFSET = 10
 
@@ -23,42 +30,63 @@ local CASTBAR_HEIGHT_RATIO = 1.3
 local oocAlpha = E:C('general', 'oocAlpha')
 
 -- Override some oUF.colors.power
--- is there a nicer way?
-oUF.colors.power["COMBO_POINTS"] = {1, 0.1, 0.1}
-oUF.colors.power["FOCUS"] = {1, 0.5, 0.25} -- why do we have to do this?
+-- oUF colours are ColorMixin objects, plain {r, g, b} tables break its elements
+oUF.colors.power["COMBO_POINTS"] = oUF:CreateColor(1, 0.1, 0.1)
+oUF.colors.power["FOCUS"] = oUF:CreateColor(1, 0.5, 0.25) -- why do we have to do this?
+
+-- true or false, or nil while the player's health is secret
+local function PlayerHealthIsFull()
+	local cur, max = UnitHealth('player'), UnitHealthMax('player')
+	if issecretvalue(cur) or issecretvalue(max) then return nil end
+	return cur >= max
+end
+
+-- isTradeskill is never secret and is only returned while a cast is in progress
+local function IsCasting(unit)
+	return select(6, UnitCastingInfo(unit)) ~= nil
+end
+
+-- the pet frame does not exist when it is disabled
+local function Pet(method, ...)
+	local pet = _G.oUF_sInterfacePet
+	if pet and pet[method] then
+		pet[method](pet, ...)
+	end
+end
 
 local function EnterCombat(self)
 	self:PlayReveal()
-	oUF_sInterfacePet:PlayReveal()
+	Pet('PlayReveal')
 end
 
 local function LeaveCombat(self)
-	local min, max = UnitHealth('player'), UnitHealthMax('player')
-	if min ~= max or UnitCastingInfo("player") then return end
+	-- unknown (secret) health counts as not full
+	if PlayerHealthIsFull() ~= true or IsCasting("player") then return end
 	self:PlayHide()
-	oUF_sInterfacePet:PlayHide()
+	Pet('PlayHide')
 end
 
 local function HealthUpdate(self)
-	if UnitAffectingCombat('player') and self:GetAlpha() == 1 then return end
-
-	local min, max = UnitHealth('player'), UnitHealthMax('player')
-
 	if UnitAffectingCombat('player') then
-		self:PlayReveal()
-		oUF_sInterfacePet:PlayReveal()
-	elseif min ~= max then
-		self:PlayAlpha(oocAlpha)
-		oUF_sInterfacePet:PlayAlpha(oocAlpha)
-	else
+		if self:GetAlpha() ~= 1 then
+			self:PlayReveal()
+			Pet('PlayReveal')
+		end
+		return
+	end
+
+	if PlayerHealthIsFull() == true then
 		self:PlayHide()
-		oUF_sInterfacePet:PlayHide()
+		Pet('PlayHide')
+	else
+		self:PlayAlpha(oocAlpha)
+		Pet('PlayAlpha', oocAlpha)
 	end
 end
 
 local function EnterVehicle(self)
 	self:PlayAlpha(oocAlpha)
-	oUF_sInterfacePet:PlayAlpha(oocAlpha)
+	Pet('PlayAlpha', oocAlpha)
 end
 
 local function ExitVehicle(self)
@@ -77,8 +105,21 @@ local function SpellFinish(self)
 	end
 end
 
+-- UnitFrame_OnEnter reads self.unit, which oUF no longer sets (Blizzard's ping code owns it)
+local function UpdateUnitTooltip(self)
+	local unit = SecureButton_GetModifiedUnit(self)
+	if not unit or GameTooltip:IsForbidden() then return end
+
+	GameTooltip_SetDefaultAnchor(GameTooltip, self)
+	if GameTooltip:SetUnit(unit) then
+		self.UpdateTooltip = UpdateUnitTooltip
+	else
+		self.UpdateTooltip = nil
+	end
+end
+
 local OnEnter = function(self)
-	UnitFrame_OnEnter(self)
+	UpdateUnitTooltip(self)
 	if self.GroupRoleIndicator then
 		if self.LFDTimer then self.LFDTimer:Cancel() end
 		self.GroupRoleIndicator:PlayReveal()
@@ -94,138 +135,126 @@ local OnLeave = function(self)
 	self.Highlight:Hide()
 end
 
-local dropdown = CreateFrame('Frame', name .. 'DropDown', UIParent, 'UIDropDownMenuTemplate')
+-- Right-click menus come from oUF's *type2 = togglemenu attribute; the old dropdown
+-- (UnitPopup_ShowMenu) no longer exists.
 
-local function menu(self)
-	dropdown:SetParent(self)
-	return ToggleDropDownMenu(1, nil, dropdown, self:GetName(), -3, 0)
-end
-
-local init = function(self)
-	local unit = self:GetParent().unit
-	local menu, name, id
-
-	if(not unit) then
-		return
+-- Aura names are secret in combat and aura containers only match spell IDs, so the
+-- uf.buffs name whitelist is resolved to spell IDs once at login. Numeric keys are spell IDs.
+local function ResolveTrackedBuffSpellIDs()
+	local ids, keys = {}, {}
+	for _, source in ipairs({ ns.C.uf and ns.C.uf.buffs, ns.UC.uf and ns.UC.uf.buffs }) do
+		for key in next, source or {} do keys[key] = true end
 	end
 
-	if(UnitIsUnit(unit, 'player')) then
-		menu = 'SELF'
-	elseif(UnitIsUnit(unit, 'vehicle')) then
-		menu = 'VEHICLE'
-	elseif(UnitIsUnit(unit, 'pet')) then
-		menu = 'PET'
-	elseif(UnitIsPlayer(unit)) then
-		id = UnitInRaid(unit)
-		if(id) then
-			menu = 'RAID_PLAYER'
-			name = GetRaidRosterInfo(id)
-		elseif(UnitInParty(unit)) then
-			menu = 'PARTY'
-		else
-			menu = 'PLAYER'
+	for key in next, keys do
+		if E:C('uf', 'buffs', key) then
+			local spellID = type(key) == 'number' and key or C_Spell.GetSpellIDForSpellIdentifier(key)
+			if spellID then ids[spellID] = true end
 		end
-	else
-		menu = 'TARGET'
-		name = RAID_TARGET_ICON
 	end
 
-	if (menu) then
-		UnitPopup_ShowMenu(self, menu, unit, name, id)
+	return ids
+end
+
+local AuraPostCreateButton = function(auras, button, options)
+	local size = auras.size
+
+	local c = button.Count
+	if c then
+		c:ClearAllPoints()
+		c:SetPoint('BOTTOMRIGHT', button, 'BOTTOMRIGHT', size*0.35, -(size*0.21))
+		c:SetFontObject("GameFontNormalOutline")
+		local font, _, flags = c:GetFont()
+		c:SetFont(font, size*0.6, flags)
+		c:SetTextColor(1, 1, 1)
 	end
-end
 
-UIDropDownMenu_Initialize(dropdown, init, 'MENU')
-
-local PlayerAuraFilter = function(element, unit, button, name, texture, count, debuffType, duration, expiration, caster, isStealable, nameplateShowSelf, spellID, canApply, isBossDebuff, casterIsPlayer, nameplateShowAll,timeMod, effect1, effect2, effect3)
-	return nameplateShowSelf or (E:C('uf', 'buffs', name))
-end
-
-local PostCreateIcon = function(auras, button)
-	local countFrame = CreateFrame('Frame', '$parentCountFrame', button)
-	countFrame:SetAllPoints(button)
-
-	local c = button.count
-	c:ClearAllPoints()
-	c:SetPoint('BOTTOMRIGHT', countFrame, 'BOTTOMRIGHT', auras.size*0.35, -(auras.size*0.21))
-	-- c:SetPoint('BOTTOMRIGHT', auras.size*0.35, -(auras.size*0.21))
-	c:SetFontObject("GameFontNormalOutline")
-	local font, _, flags = c:GetFont()
-	c:SetFont(font, auras.size*0.6, flags)
-	c:SetTextColor(1, 1, 1)
-
-	button.cd:SetReverse(true)
-	button.overlay:SetTexture(nil)
-	button.icon:SetTexCoord(.05, .95, .2, .7)
+	if button.Cooldown then button.Cooldown:SetReverse(true) end
+	button.Icon:SetTexCoord(.05, .95, .2, .7)
+	button.Icon:SetDesaturated(options and options.sInterfaceDesaturate or false)
 
 	E:ShadowedBorder(button)
 end
 
-local PostUpdateIcon = function(_, unit, button)
-	local texture = button.icon
-	if button.isPlayer or UnitIsFriend('player', unit) or not button.isDebuff then
-		texture:SetDesaturated(false)
-	else
-		texture:SetDesaturated(true)
-	end
-	button:SetHeight(button:GetWidth()/1.4)
+-- Debuffs cast by others are desaturated on units that are not friendly. Aura data is not
+-- readable per button any more, so two copies of the "others" group exist and one is enabled.
+local AurasPostUpdate = function(auras)
+	local unit = auras:GetUnit()
+	local hostile = (unit and not UnitIsFriend('player', unit)) and true or false
+	if auras.sInterfaceHostile == hostile then return end
+
+	auras.sInterfaceHostile = hostile
+	auras:SetAuraGroupEnabled(auras.sInterfaceOthers.desaturated, hostile)
+	auras:SetAuraGroupEnabled(auras.sInterfaceOthers.normal, not hostile)
 end
 
-local AuraSetPosition = function(element, from, to)
-	for i = from, to do
-		local button = element[i]
-		if i > 1 and ((i % element.buttonsPerRow) == 1) then
-			button:SetPoint("BOTTOMLEFT", element[i-element.buttonsPerRow], "TOPLEFT", 0, element.spacing)
-		elseif (i > 1) then
-			button:SetPoint("LEFT", element[i-1], "RIGHT", element.spacing, 0)
-		else
-			button:SetPoint("BOTTOMLEFT", element, "BOTTOMLEFT", 0, 0)
-		end
-	end
+local function AddOthersDebuffs(b)
+	b.sInterfaceOthers = {
+		normal = b:AddGroup('HARMFUL|!PLAYER'),
+		desaturated = b:AddGroup('HARMFUL|!PLAYER', { sInterfaceDesaturate = true }),
+	}
+	b:SetAuraGroupEnabled(b.sInterfaceOthers.desaturated, false)
+	b.sInterfaceHostile = false
+	b.PostUpdate = AurasPostUpdate
 end
 
-local function Auras(self)
-	local enabled = E:C('uf', self.unit:match('[^%d]+'), 'auras', 'enabled')
+local function Auras(self, unit)
+	local baseUnit = unit:match('[^%d]+')
+	local enabled = E:C('uf', baseUnit, 'auras', 'enabled')
 	if not enabled then return end
 
-	local mode = E:C('uf', self.unit:match('[^%d]+'), 'auras', 'mode')
-	local size = E:C('uf', self.unit:match('[^%d]+'), 'auras', 'size')
+	local mode = E:C('uf', baseUnit, 'auras', 'mode')
+	local size = E:C('uf', baseUnit, 'auras', 'size')
 
+	local frameWidth = self:GetWidth()
 	local spacing = 0
 	local buttonsPerRow = 0
 	local iterations = 0 -- reduce aura per row until loop condition satisfied
 	while (spacing < 4) do -- require at least this many pixels spacing between buttons
-		local frameWidth = self:GetWidth()
 		buttonsPerRow = (math.floor(frameWidth / size) - iterations)
 		local leftover = frameWidth - (buttonsPerRow*size)
 		spacing = leftover / (buttonsPerRow-1)
 		iterations = iterations+1
 	end
 
-	local totalButtons = buttonsPerRow
-
-	local b = CreateFrame('Frame', nil, self)
-	b.spacing = spacing
-	b.num = totalButtons
-	b.buttonsPerRow = buttonsPerRow
-	b:SetSize(self:GetWidth(), 14)
-	b.size = size
+	-- oUF auras are Blizzard aura containers laid out by the client; a row holds
+	-- exactly buttonsPerRow buttons (the extra half pixel absorbs float rounding)
+	local b = self:CreateAuras({
+		initialAnchor = 'BOTTOMLEFT',
+		growthX = 'RIGHT',
+		growthY = 'UP',
+		layoutLimit = frameWidth + 0.5,
+	})
+	-- anchor before adding groups, the container cannot be repositioned by addons afterwards
+	b:SetSize(frameWidth, 14)
 	b:SetPoint('BOTTOMLEFT', self, 'TOPLEFT', 0, 12)
-	b.initialAnchor = 'TOPLEFT'
-	b['growth-y'] = 'UP'
-	b.PostCreateIcon = PostCreateIcon
-	b.PostUpdateIcon = PostUpdateIcon
-	b.SetPosition = AuraSetPosition
+	b.size = size
+	b.width = size
+	b.height = size/1.4
+	b.elementSpacing = spacing
+	b.lineSpacing = spacing
+	b.maxFrameCount = buttonsPerRow
+	b.showCount = true
+	b.PostCreateButton = AuraPostCreateButton
 
+	-- each group is capped at one row; buffs come first, then debuffs
 	if mode == 'aura' then
-		b.gap = false
-		b.numTotal = totalButtons
-		self.Auras = b
+		b:AddGroup('HELPFUL')
+		b:AddGroup('HARMFUL|PLAYER')
+		AddOthersDebuffs(b)
 	elseif mode == 'debuff' then
-		self.Debuffs = b
+		b:AddGroup('HARMFUL|PLAYER')
+		AddOthersDebuffs(b)
 	else
-		self.Buffs = b
+		-- Blizzard's personal-display buffs (was nameplateShowSelf) plus the uf.buffs whitelist
+		b:AddGroup('HELPFUL', { candidateFilters = { nameplateShowPersonal = true } })
+		local ids = ResolveTrackedBuffSpellIDs()
+		if next(ids) then
+			b:AddGroup('HELPFUL', { candidateFilters = { nameplateShowPersonal = false, includeSpellIDs = ids } })
+		end
 	end
+
+	self.sInterfaceAuras = b
 end
 
 local PostUpdateHealth = function(health, unit)
@@ -235,6 +264,12 @@ local PostUpdateHealth = function(health, unit)
 end
 
 local PostUpdatePower = function(Power, _, _, _, max)
+	-- the maximum is secret for units that are not player controlled; it cannot be tested for 0
+	if issecretvalue(max) then
+		Power:Show()
+		return
+	end
+
 	if (max == 0) then
 		Power:Hide()
 	else
@@ -242,11 +277,38 @@ local PostUpdatePower = function(Power, _, _, _, max)
 	end
 end
 
+-- oUF dropped .bg/.multiplier tinting; background textures get colour * multiplier here.
+-- Secret colour components cannot be multiplied, so they darken through alpha instead.
+local function TintBackground(bg, r, g, b)
+	local mu = bg.multiplier or 1
+	if issecretvalue(r) or issecretvalue(g) or issecretvalue(b) then
+		bg:SetVertexColor(r, g, b, mu)
+	else
+		bg:SetVertexColor(r * mu, g * mu, b * mu, 1)
+	end
+end
+
+local PostUpdateBarColor = function(element, _, color, r, g, b)
+	local bg = element.bg
+	if not bg then return end
+
+	-- same precedence oUF uses for the bar itself
+	if b then
+		TintBackground(bg, r, g, b)
+	elseif color then
+		TintBackground(bg, color:GetRGB())
+	end
+end
+
+local PostUpdateAdditionalPowerColor = function(element, color)
+	PostUpdateBarColor(element, nil, color)
+end
+
 local function PostUpdatePowerArenaPreparation(self, specID)
 	self:Hide()
 end
 
-local function PostUpdateClassPower(element, _, max, hasMaxChanged, powerType)
+local function PostUpdateClassPower(element, _, max, _, hasMaxChanged, powerType)
 	if class == "DEATHKNIGHT" then return end
 	local ClassPowerPip = element[1]
 	local classPowerBar = ClassPowerPip:GetParent()
@@ -276,16 +338,17 @@ local function PostUpdateClassPower(element, _, max, hasMaxChanged, powerType)
 		local newMax = (max > 5) and 5 or max
 		local width = (E:C('uf', 'player', 'size', 'width') - (E:C('uf', 'classIconSpacing') * (newMax - 1))) / newMax
 
-		local color = oUF.colors.power[powerType or "COMBO_POINTS"]
+		local color = oUF.colors.power[powerType or "COMBO_POINTS"] or oUF.colors.power["COMBO_POINTS"]
+		local r, g, b = color:GetRGB()
 
 		for index = 1, max do
 			local pip = element[index]
 			pip:SetWidth(width)
 
 			if index <= 5 then
-				pip:SetStatusBarColor(color[1], color[2], color[3])
+				pip:SetStatusBarColor(r, g, b)
 			else
-				pip:SetStatusBarColor(color[1] * multiplier, color[2] * multiplier, color[3] * multiplier)
+				pip:SetStatusBarColor(r * multiplier, g * multiplier, b * multiplier)
 			end
 		end
 
@@ -296,13 +359,48 @@ local function PostUpdateClassPower(element, _, max, hasMaxChanged, powerType)
 	end
 end
 
-local PostCastStart = function(self, unit)
+-- oUF no longer calls PostUpdate when the class power goes away (e.g. leaving cat form)
+local function PostClassPowerVisibility(element, isVisible)
+	if class == "DEATHKNIGHT" then return end
+	element[1]:GetParent():SetShown(isVisible)
+end
+
+local NOT_INTERRUPTIBLE_COLOR = CreateColor(0.65, 0.65, 0.65)
+
+-- "elapsed | total" for casts and "remaining | total" for channels, formatted by the client
+-- because cast times are duration objects that can hold secret values
+local castTimeFormatter = C_StringUtil.CreateNumericRuleFormatter()
+castTimeFormatter:SetBreakpoints({ { threshold = 0, format = "%.1f" } })
+
+local function SetCastTimeFormat(self, isChannel)
+	if self.sInterfaceTimeIsChannel == isChannel then return end
+	self.sInterfaceTimeIsChannel = isChannel
+
+	local property = Enum.DurationTextBindingProperty
+	self.Time.binding:SetTextFormat("{} | {}", {
+		{ property = isChannel and property.RemainingDuration or property.ElapsedDuration, formatter = castTimeFormatter },
+		{ property = property.TotalDuration, formatter = castTimeFormatter },
+	})
+end
+
+local PostCastStart = function(self, unit, _, notInterruptible)
+	self.sInterfaceFailed = nil
 	self:PlayReveal()
 	self.Spark:Show()
-	self:SetStatusBarColor(unpack(self.casting and self.CastingColor or self.ChannelingColor))
-	if unit ~= 'player' and self.notInterruptible and UnitCanAttack('player', unit) then
-		self:SetStatusBarColor(0.65, 0.65, 0.65)
+
+	local isCasting = IsCasting(unit)
+	SetCastTimeFormat(self, not isCasting)
+
+	local color = isCasting and self.CastingColorObject or self.ChannelingColorObject
+	if unit ~= 'player' and UnitCanAttack('player', unit) then
+		-- notInterruptible is secret for units other than the player and pet
+		if issecretvalue(notInterruptible) then
+			color = C_CurveUtil.EvaluateColorFromBoolean(notInterruptible, NOT_INTERRUPTIBLE_COLOR, color)
+		elseif notInterruptible then
+			color = NOT_INTERRUPTIBLE_COLOR
+		end
 	end
+	self:SetStatusBarColor(color:GetRGB())
 
 	local parent = self:GetParent()
 	local anchor
@@ -320,31 +418,38 @@ local PostCastStart = function(self, unit)
 end
 
 local PostCastStop = function(self)
-	if (self.holdTime ~= 0) then return end
+	-- a failed or interrupted cast is still held on screen when its _STOP event arrives
+	if self.sInterfaceFailed then return end
 	self:SetStatusBarColor(unpack(self.CompleteColor))
 	self:PlayAlpha(0, 0.1)
 end
 
-local PostCastFailed = function(self, event, unit)
+local PostCastFailed = function(self)
+	self.sInterfaceFailed = true
 	self:SetStatusBarColor(unpack(self.FailColor))
 	self:PlayAlpha(0, 0.1)
 end
 
-local CustomTimeText = function(self, duration)
-	if self.delay == 0 then
-		self.Time:SetFormattedText("%.1f | %.1f", duration, self.max)
-	else
-		self.Time:SetFormattedText("%.1f | %.1f |cffff0000-%.1f", duration, self.max, self.delay)
-	end
+-- pushback, shown in red after the cast time as before
+local CustomDelayText = function(self, delay)
+	self.Delay:SetFormattedText(" -%.1f", delay)
 end
 
 local Castbar = function(self, unit)
 	local iconSpacing = 6
 	local cb = createStatusbar(self, E:C('general', 'texture'), nil, nil, nil, 1, 1, 1, 1)
 
+	cb.Delay = cb:CreateFontString(nil, "ARTWORK", "GameFontHighlightOutline")
+	cb.Delay:SetJustifyH("RIGHT")
+	cb.Delay:SetPoint('TOPRIGHT', -TEXT_X_OFFSET, TEXT_Y_OFFSET)
+	cb.Delay:SetTextColor(1, 0, 0)
+
 	cb.Time = cb:CreateFontString("sInterface_CastBarTime", "ARTWORK", "GameFontHighlightOutline")
 	cb.Time:SetJustifyH("RIGHT")
-	cb.Time:SetPoint('TOPRIGHT', -TEXT_X_OFFSET, TEXT_Y_OFFSET)
+	cb.Time:SetPoint('TOPRIGHT', cb.Delay, 'TOPLEFT')
+	cb.Time.binding = C_DurationUtil.CreateDurationTextBinding()
+	cb.Time.binding:SetFormatter(castTimeFormatter)
+	SetCastTimeFormat(cb, false)
 
 	cb.Text = cb:CreateFontString("sInterface_CastBarTime", "ARTWORK", "GameFontHighlightOutline")
 	cb.Text:SetJustifyH("LEFT")
@@ -357,6 +462,8 @@ local Castbar = function(self, unit)
 	cb.CompleteColor = {0.12, 0.86, 0.15}
 	cb.FailColor = {1.0, 0.09, 0}
 	cb.ChannelingColor = {0.32, 0.3, 1}
+	cb.CastingColorObject = CreateColor(unpack(cb.CastingColor))
+	cb.ChannelingColorObject = CreateColor(unpack(cb.ChannelingColor))
 
 	cb.Icon = cb:CreateTexture(nil, 'ARTWORK')
 	cb.Icon:SetTexCoord(.1, .9, .1, .9)
@@ -375,8 +482,9 @@ local Castbar = function(self, unit)
 	cb.PostCastStart = PostCastStart
 	cb.PostCastStop = PostCastStop
 	cb.PostCastFail = PostCastFailed
+	cb.PostCastInterrupted = PostCastFailed
 	cb.PostCastInterruptible = PostCastFailed
-	cb.CustomTimeText = CustomTimeText
+	cb.CustomDelayText = CustomDelayText
 
 	cb.timeToHold = 0.75
 
@@ -394,6 +502,14 @@ local Castbar = function(self, unit)
 	self.Castbar = cb
 end
 
+-- oUF updates the prediction bars without an interpolation argument
+local function SmoothSubBar(bar)
+	local setValue = bar.SetValue
+	bar.SetValue = function(b, value, interpolation)
+		return setValue(b, value, interpolation or SMOOTHING)
+	end
+end
+
 local HealthPrediction = function(self)
 	local myBar = createStatusbar(self.Health, E:C('general', 'texture'), nil, nil, 200, 0.33, 0.59, 0.33, 0.6)
 	myBar:SetPoint('TOP')
@@ -402,7 +518,7 @@ local HealthPrediction = function(self)
 	myBar:SetFrameLevel(self.Health:GetFrameLevel())
 	myBar:SetPoint('LEFT', self.Health:GetStatusBarTexture(), 'RIGHT')
 	myBar:SetWidth(self:GetWidth())
-	myBar.Smooth = true
+	SmoothSubBar(myBar)
 
 	local otherBar = createStatusbar(self.Health, E:C('general', 'texture'), nil, nil, 200, 0.33, 0.59, 0.33, 0.6)
 	otherBar:SetPoint('TOP')
@@ -411,7 +527,7 @@ local HealthPrediction = function(self)
 	otherBar:SetFrameLevel(self.Health:GetFrameLevel())
 	otherBar:SetPoint('LEFT', self.Health:GetStatusBarTexture(), 'RIGHT')
 	otherBar:SetWidth(self:GetWidth())
-	otherBar.Smooth = true
+	SmoothSubBar(otherBar)
 
 	local absorbBar = createStatusbar(self.Health, E:C('general', 'texture'), nil, nil, 200, 0.33, 0.59, 0.33, 0.6)
 	absorbBar:SetPoint('TOP')
@@ -420,7 +536,6 @@ local HealthPrediction = function(self)
 	absorbBar:SetFrameLevel(self.Health:GetFrameLevel())
 	absorbBar:SetPoint('LEFT', self.Health:GetStatusBarTexture(), 'RIGHT')
 	absorbBar:SetWidth(self:GetWidth())
-	otherBar.Smooth = true
 
 	local healAbsorbBar = createStatusbar(self.Health, E:C('general', 'texture'), nil, nil, 200, 0.33, 0.59, 0.33, 0.6)
 	healAbsorbBar:SetPoint('TOP')
@@ -429,16 +544,14 @@ local HealthPrediction = function(self)
 	healAbsorbBar:SetFrameLevel(self.Health:GetFrameLevel())
 	healAbsorbBar:SetPoint('LEFT', self.Health:GetStatusBarTexture(), 'RIGHT')
 	healAbsorbBar:SetWidth(self:GetWidth())
-	otherBar.Smooth = true
 
-	self.HealthPrediction = {
-		myBar = myBar,
-		otherBar = otherBar,
-		absorbBar = absorbBar,
-		healAbsorbBar = healAbsorbBar,
-		maxOverflow = 1.1,
-		frequentUpdates = true,
-	}
+	-- the HealthPrediction element is now part of Health
+	local h = self.Health
+	h.HealingPlayer = myBar
+	h.HealingOther = otherBar
+	h.DamageAbsorb = absorbBar
+	h.HealAbsorb = healAbsorbBar
+	h.incomingHealOverflow = 1.1
 end
 
 local Health = function(self)
@@ -455,11 +568,10 @@ local Health = function(self)
 	h.colorReaction = true
 	hbg.multiplier = .4
 
-	h.frequentUpdates = false
-
-	h.Smooth = true
+	h.smoothing = SMOOTHING
 
 	h.PostUpdate = PostUpdateHealth
+	h.PostUpdateColor = PostUpdateBarColor
 
 	h.bg = hbg
 	self.Health = h
@@ -483,12 +595,12 @@ local ReadyCheck = function(self)
 	self.ReadyCheck = rc
 end
 
-local Power = function(self)
+local Power = function(self, unit)
 	local powerHolder = CreateFrame("Frame", nil, self)
 	powerHolder:SetPoint("LEFT")
 	powerHolder:SetPoint("RIGHT")
 	powerHolder:SetPoint("TOP", self, "BOTTOM", POWER_X_OFFSET, POWER_Y_OFFSET)
-	powerHolder:SetHeight(E:C('uf', self.unit:match('[^%d]+'), 'size', 'power'))
+	powerHolder:SetHeight(E:C('uf', unit:match('[^%d]+'), 'size', 'power'))
 
 	local p = createStatusbar(powerHolder, E:C('general', 'texture'), nil, nil, nil, 1, 1, 1, 1)
 	p:SetPoint('LEFT', (self:GetWidth()/18), 0)
@@ -496,9 +608,9 @@ local Power = function(self)
 	p:SetPoint("TOP")
 	p:SetPoint("BOTTOM")
 
-	if self.unit == 'player' then p.frequentUpdates = true end
+	if unit == 'player' then p.frequentUpdates = true end
 
-	p.Smooth = true
+	p.smoothing = SMOOTHING
 
 	local pbg = p:CreateTexture(nil, 'BACKGROUND')
 	pbg:SetAllPoints(p)
@@ -515,18 +627,19 @@ local Power = function(self)
 	p.shadowedShadow:SetFrameLevel(self.Health:GetFrameLevel()+1)
 
 	p.PostUpdate = PostUpdatePower
+	p.PostUpdateColor = PostUpdateBarColor
 
 	p.bg = pbg
 	self.Power = p
 	self.PowerHolder = powerHolder
 end
 
-local AdditionalPower = function(self)
+local AdditionalPower = function(self, unit)
 	local powerHolder = CreateFrame("Frame", nil, self)
 	powerHolder:SetPoint("LEFT")
 	powerHolder:SetPoint("RIGHT")
 	powerHolder:SetPoint("TOP", self.PowerHolder, "BOTTOM", 0, -4)
-	powerHolder:SetHeight(E:C('uf', self.unit:match('[^%d]+'), 'size', 'power'))
+	powerHolder:SetHeight(E:C('uf', unit:match('[^%d]+'), 'size', 'power'))
 
 
 	local p = createStatusbar(powerHolder, E:C('general', 'texture'), nil, nil, nil, 1, 1, 1, 1)
@@ -534,8 +647,6 @@ local AdditionalPower = function(self)
 	p:SetPoint('RIGHT', -(self:GetWidth()/18), 0)
 	p:SetPoint("TOP")
 	p:SetPoint("BOTTOM")
-
-	p.Smooth = true
 
 	local pbg = p:CreateTexture(nil, 'BACKGROUND')
 	pbg:SetAllPoints(p)
@@ -551,6 +662,8 @@ local AdditionalPower = function(self)
 	p.shadowedShadow:SetFrameStrata(self.Health:GetFrameStrata())
 	p.shadowedShadow:SetFrameLevel(self.Health:GetFrameLevel()+1)
 
+	p.PostUpdateColor = PostUpdateAdditionalPowerColor
+
 	p.bg = pbg
 	self.AdditionalPower = p
 	self.AdditionalPowerHolder = powerHolder
@@ -563,19 +676,21 @@ local PhaseIndicator = function(self)
 	self.PhaseIndicator = PhaseIndicator
 end
 
-local Shared = function(self, ...)
-	local unit = self.unit:match('^(.-)%d+') or self.unit
-	-- self.unit = unit
-	self.menu = menu
+-- oUF passes the unit to style functions; it no longer sets self.unit (Blizzard code reads it)
+local Shared = function(self, unit)
+	unit = unit:match('^(.-)%d+') or unit
 
 	self:SetScript('OnEnter', OnEnter)
 	self:SetScript('OnLeave', OnLeave)
 
-	self:RegisterForClicks'AnyUp'
-
 	local width = E:C('uf', unit, 'size', 'width')
 	local height = E:C('uf', unit, 'size', 'height')
-	self:SetSize(width, height)
+	-- group members can be styled during combat; their size is set securely by
+	-- oUF-initialConfigFunction
+	if not InCombatLockdown() then
+		self:RegisterForClicks'AnyUp'
+		self:SetSize(width, height)
+	end
 
 	Health(self)
 
@@ -598,14 +713,13 @@ end
 
 
 local UnitSpecific = {
-	player = function(self, ...)
-		Shared(self)
-		Power(self)
-		AdditionalPower(self)
+	player = function(self, unit)
+		Shared(self, unit)
+		Power(self, unit)
+		AdditionalPower(self, unit)
 		HealthPrediction(self)
 
-		Auras(self)
-		self.Buffs.CustomFilter = PlayerAuraFilter
+		Auras(self, unit)
 
 		local fcf = CreateFrame("Frame", nil, self.Health)
 		fcf:SetSize(32, 32)
@@ -617,9 +731,7 @@ local UnitSpecific = {
 		end
 		self.FloatingCombatFeedback = fcf
 
-		PetCastingBarFrame:UnregisterAllEvents()
-		PetCastingBarFrame.Show = function() end
-		PetCastingBarFrame:Hide()
+		-- oUF's player castbar hides PlayerCastingBarFrame and PetCastingBarFrame itself
 
 		local htext = self.Health:CreateFontString("sInterface_PlayerHealth", "ARTWORK", "GameFontNormalOutline")
 		htext:SetJustifyH("RIGHT")
@@ -633,17 +745,23 @@ local UnitSpecific = {
 		ptext.frequentUpdates = .1
 		self:Tag(ptext, '[sInterface:power]')
 
-		local ClassPowerBar = CreateFrame('Frame', "ClassPowerBar", self)
+		-- unnamed: the global ClassPowerBar is a Blizzard mixin used by the resource displays
+		local ClassPowerBar = CreateFrame('Frame', nil, self)
 		ClassPowerBar:SetWidth(self:GetWidth())
 		ClassPowerBar:SetHeight(self.PowerHolder:GetHeight())
 		ClassPowerBar:SetPoint("TOP", self.PowerHolder, "BOTTOM", CLASSPOWER_X_OFFSET, CLASSPOWER_Y_OFFSET)
+		-- shown by the ClassPower callbacks while the class has a class power (runes stay visible)
+		if class ~= "DEATHKNIGHT" then
+			ClassPowerBar:Hide()
+		end
 		self.ClassPowerBar = ClassPowerBar
 
 		local ClassPower = {}
 		ClassPower.PostUpdate = PostUpdateClassPower
+		ClassPower.PostVisibility = PostClassPowerVisibility
 
 		for index = 1, 11 do
-			local ClassPowerPip = CreateFrame("StatusBar", "ClassPowerPip"..index, ClassPowerBar)
+			local ClassPowerPip = CreateFrame("StatusBar", nil, ClassPowerBar)
 			ClassPowerPip:SetStatusBarTexture(E:C('general', 'texture'))
 			ClassPowerPip:SetHeight(ClassPowerBar:GetHeight())
 			ClassPowerPip:SetWidth(16)
@@ -668,7 +786,7 @@ local UnitSpecific = {
 			local totalRunes = 6
 			local width = (E:C('uf', 'player', 'size', 'width') - (E:C('uf', 'classIconSpacing') * (totalRunes - 1))) / totalRunes
 			for index = 1, totalRunes do
-				local Rune = CreateFrame('StatusBar', "Rune"..index, ClassPowerBar)
+				local Rune = CreateFrame('StatusBar', nil, ClassPowerBar)
 				Rune:SetSize(width, ClassPowerBar:GetHeight())
 				Rune:SetStatusBarTexture(E:C('general', 'texture'))
 				E:ShadowedBorder(Rune)
@@ -690,18 +808,18 @@ local UnitSpecific = {
 		self.GCD = CreateFrame('Frame', nil, self.Health)
 		self.GCD:SetPoint('LEFT', self.Health, 'LEFT')
 		self.GCD:SetPoint('RIGHT', self.Health, 'RIGHT')
-		self.GCD:SetHeight(E:C('uf', self.unit, 'size', 'height')+4)
+		self.GCD:SetHeight(E:C('uf', 'player', 'size', 'height')+4)
 
-		self.GCD:SetHeight(E:C('uf', self.unit, 'size', 'height')+4)
+		self.GCD:SetHeight(E:C('uf', 'player', 'size', 'height')+4)
 
 		self.GCD.Spark = self.GCD:CreateTexture(nil, "OVERLAY")
 		self.GCD.Spark:SetTexture("Interface\\CastingBar\\UI-CastingBar-Spark")
 		self.GCD.Spark:SetBlendMode("ADD")
-		self.GCD.Spark:SetHeight((E:C('uf', self.unit, 'size', 'height')*2)+4)
+		self.GCD.Spark:SetHeight((E:C('uf', 'player', 'size', 'height')*2)+4)
 		self.GCD.Spark:SetWidth(9)
 		self.GCD.Spark:SetPoint('LEFT', self.Health, 'LEFT', 0, 0)
 
-		local altp = createStatusbar(self, E:C('general', 'texture'), nil, E:C('uf', self.unit, 'size', 'power'), self:GetWidth(), 1, 1, 1, 1)
+		local altp = createStatusbar(self, E:C('general', 'texture'), nil, E:C('uf', 'player', 'size', 'power'), self:GetWidth(), 1, 1, 1, 1)
 		altp:SetPoint("BOTTOM", self, "TOP", 0, 3)
 		altp.bg = altp:CreateTexture(nil, 'BORDER')
 		altp.bg:SetAllPoints(altp)
@@ -729,13 +847,13 @@ local UnitSpecific = {
 		end
 	end,
 
-	target = function(self, ...)
-		Shared(self)
-		Power(self)
+	target = function(self, unit)
+		Shared(self, unit)
+		Power(self, unit)
 		HealthPrediction(self)
 		Castbar(self)
 		PhaseIndicator(self)
-		Auras(self)
+		Auras(self, unit)
 
 		local htext = self.Health:CreateFontString("sInterface_TargetHealth", "ARTWORK", "GameFontNormalOutline")
 		htext:SetJustifyH("RIGHT")
@@ -751,13 +869,13 @@ local UnitSpecific = {
 		self:Tag(name, '[sInterface:level<$ ][sInterface:name]')
 	end,
 
-	focus = function(self, ...)
-		Shared(self)
-		Power(self)
+	focus = function(self, unit)
+		Shared(self, unit)
+		Power(self, unit)
 		HealthPrediction(self)
 		Castbar(self)
 		PhaseIndicator(self)
-		Auras(self)
+		Auras(self, unit)
 
 		local htext = self.Health:CreateFontString("sInterface_FocusHealth", "ARTWORK", "GameFontNormalOutline")
 		htext:SetJustifyH("RIGHT")
@@ -772,12 +890,12 @@ local UnitSpecific = {
 		self:Tag(name, '[sInterface:level<$ ][sInterface:name]')
 	end,
 
-	boss = function(self, ...)
-		Shared(self)
-		Power(self)
+	boss = function(self, unit)
+		Shared(self, unit)
+		Power(self, unit)
 		Castbar(self)
 		PhaseIndicator(self)
-		Auras(self)
+		Auras(self, unit)
 
 		local htext = self.Health:CreateFontString("sInterface_BossHealth", "ARTWORK", "GameFontNormalOutline")
 		htext:SetJustifyH("RIGHT")
@@ -807,8 +925,8 @@ local UnitSpecific = {
 		self.AlternativePower = altp
 	end,
 
-	pet = function(self, ...)
-		Shared(self)
+	pet = function(self, unit)
+		Shared(self, unit)
 		HealthPrediction(self)
 		PhaseIndicator(self)
 
@@ -828,9 +946,9 @@ local UnitSpecific = {
 		end
 	end,
 
-	targettarget = function(self, ...)
-		Shared(self)
-		Auras(self)
+	targettarget = function(self, unit)
+		Shared(self, unit)
+		Auras(self, unit)
 
 		local name = self.Health:CreateFontString("sInterface_TargetTargetName", "ARTWORK", "GameFontNormalOutline")
 		name:SetJustifyH("LEFT")
@@ -838,14 +956,14 @@ local UnitSpecific = {
 		self:Tag(name, '[sInterface:shortname]')
 	end,
 
-	party = function(self, ...)
-		Shared(self)
-		Power(self)
+	party = function(self, unit)
+		Shared(self, unit)
+		Power(self, unit)
 		HealthPrediction(self)
 		PhaseIndicator(self)
 		LFD(self)
 		ReadyCheck(self)
-		Auras(self)
+		Auras(self, unit)
 
 		local htext = self.Health:CreateFontString("sInterface_PartyHealth", "ARTWORK", "GameFontNormalOutline")
 		htext:SetJustifyH("RIGHT")
@@ -860,13 +978,13 @@ local UnitSpecific = {
 		self:Tag(name, '[sInterface:level<$ ][sInterface:name]')
 	end,
 
-	tank = function(self, ...)
-		Shared(self)
-		Power(self)
+	tank = function(self, unit)
+		Shared(self, unit)
+		Power(self, unit)
 		HealthPrediction(self)
 		PhaseIndicator(self)
 		LFD(self)
-		Auras(self)
+		Auras(self, unit)
 
 		local htext = self.Health:CreateFontString("sInterface_TankHealth", "ARTWORK", "GameFontNormalOutline")
 		htext:SetJustifyH("RIGHT")
@@ -886,11 +1004,11 @@ local UnitSpecific = {
 		self.ReadyCheck = rc
 	end,
 
-	arena = function(self, ...)
-		Shared(self)
-		Power(self)
+	arena = function(self, unit)
+		Shared(self, unit)
+		Power(self, unit)
 		Castbar(self)
-		Auras(self)
+		Auras(self, unit)
 
 		local htext = self.Health:CreateFontString("sInterface_ArenaHealth", "ARTWORK", "GameFontNormalOutline")
 		htext:SetJustifyH("RIGHT")
@@ -902,10 +1020,12 @@ local UnitSpecific = {
 		name:SetPoint('TOPLEFT', self, TEXT_X_OFFSET, TEXT_Y_OFFSET)
 		name:SetHeight(10)
 		name:SetPoint('RIGHT', htext, 'LEFT', -3, 0)
-		self:Tag(name, '[arenaspec]')
+		-- [arenaspec] reads GetArenaOpponentSpec, which is always secret (and Forever has no
+		-- specializations); show the opponent's name instead
+		self:Tag(name, '[sInterface:name]')
 
 		local t = CreateFrame('Frame', nil, self)
-		t:SetSize(E:C('uf', self.unit:match('[^%d]+'), 'size', 'height'), E:C('uf', self.unit:match('[^%d]+'), 'size', 'height'))
+		t:SetSize(E:C('uf', unit:match('[^%d]+'), 'size', 'height'), E:C('uf', unit:match('[^%d]+'), 'size', 'height'))
 		t:SetPoint('TOPRIGHT', self, 'TOPLEFT', -4, 0)
 		E:ShadowedBorder(t)
 		self.Trinket = t
@@ -913,8 +1033,8 @@ local UnitSpecific = {
 		self.Power.PostUpdateArenaPreparation = PostUpdatePowerArenaPreparation
 	end,
 
-	raid = function(self, ...)
-		Shared(self)
+	raid = function(self, unit)
+		Shared(self, unit)
 		HealthPrediction(self)
 		LFD(self)
 		ReadyCheck(self)
@@ -927,9 +1047,6 @@ local UnitSpecific = {
 }
 
 UnitSpecific.focustarget = UnitSpecific.targettarget
-
-local hider = CreateFrame("Frame", "Hider", UIParent)
-hider:Hide()
 
 oUF:RegisterStyle('sInterface', Shared)
 for unit,layout in next, UnitSpecific do
@@ -955,17 +1072,12 @@ end
 local function partySpawn(self)
 	if not E:C('uf', 'party', 'enabled') then return end
 
-	for i = 1, MAX_PARTY_MEMBERS do
-		local pet = 'PartyMemberFrame'..i..'PetFrame'
-		_G[pet]:SetParent(hider)
-		_G[pet..'HealthBar']:UnregisterAllEvents()
-	end
-
+	-- oUF disables the pooled Blizzard party frames, their pet frames and the compact party frames
 	local adjuster = E:C('uf', 'party', 'auras', 'enabled') and E:C('uf', 'party', 'auras', 'size') or 0
 	local yOffset =  -23 + -adjuster
 
 	self:SetActiveStyle('sInterface - Party')
-	local party = self:SpawnHeader(nil, nil, 'custom [@arena1,exists][@arena2,exists][@arena3,exists][group:party,nogroup:raid] show; hide',
+	local party = self:SpawnHeader(nil, nil,
 	'showPlayer', false,
 	'showSolo', false,
 	'showParty', true,
@@ -977,6 +1089,7 @@ local function partySpawn(self)
 		]]):format(E:C('uf', 'party', 'size', 'height'), E:C('uf', 'party', 'size', 'width'))
 	)
 
+	party:SetVisibility('custom [@arena1,exists][@arena2,exists][@arena3,exists][group:party,nogroup:raid] show; hide')
 	party:SetPoint(unpack(E:C('uf', 'party', 'position')))
 end
 
@@ -987,7 +1100,7 @@ local function maintankSpawn(self)
 	local yOffset =  -23 + -adjuster
 
 	self:SetActiveStyle('sInterface - Tank')
-	local maintank = self:SpawnHeader('oUF_MainTank', nil, 'raid',
+	local maintank = self:SpawnHeader('oUF_MainTank', nil,
 	'showRaid', true,
 	'showSolo', false,
 	'groupFilter', 'MAINTANK',
@@ -999,19 +1112,29 @@ local function maintankSpawn(self)
 		]]):format(E:C('uf', 'maintank', 'size', 'height'), E:C('uf', 'maintank', 'size', 'width'))
 	)
 
+	maintank:SetVisibility('raid')
 	maintank:SetPoint(unpack(E:C('uf', 'maintank', 'position')))
+end
+
+-- The raid container is an Edit Mode frame of its own now, so reparenting the manager no longer
+-- hides it. Block both the way oUF blocks the other Blizzard unit frames, without writing to
+-- Blizzard tables (that taints them).
+local function HideBlizzardRaidFrames()
+	if InCombatLockdown() or not C_AddOns.IsAddOnLoaded('Blizzard_CompactRaidFrames') then return end
+
+	for _, frame in ipairs({ CompactRaidFrameManager, CompactRaidFrameContainer }) do
+		frame:UnregisterAllEvents()
+		frame:SetRolesets('alwaysBlocked')
+	end
 end
 
 local function raidSpawn(self)
 	if not E:C('uf', 'raid', 'enabled') then return end
 
-	if IsAddOnLoaded('Blizzard_CompactRaidFrames') then
-		CompactRaidFrameManager:SetParent(hider)
-		CompactUnitFrameProfiles:UnregisterAllEvents()
-	end
+	HideBlizzardRaidFrames()
 
 	self:SetActiveStyle('sInterface - Raid')
-	local raid = oUF:SpawnHeader(nil, nil, 'raid',
+	local raid = oUF:SpawnHeader(nil, nil,
 	'showPlayer', true,
 	'showSolo', false,
 	'showParty', false,
@@ -1032,6 +1155,7 @@ local function raidSpawn(self)
 	]]):format(E:C('uf', 'raid', 'size', 'height'), E:C('uf', 'raid', 'size', 'width'))
 	)
 
+	raid:SetVisibility('raid')
 	raid:SetPoint(unpack(E:C('uf', 'raid', 'position')))
 end
 
@@ -1072,33 +1196,10 @@ local function playerSpawn(self)
 
 	spawnHelper(self, 'player', E:C('uf', 'player', 'position'))
 
-	if not (E:C('uf', 'emulatePersonalResourceDisplay')) then return end
-
-	SetCVar("nameplateShowSelf", 1)
-	SetCVar("NameplatePersonalShowAlways", 1)
-	SetCVar("NameplatePersonalShowWithTarget", 2) -- Show with friendly and hostile targets
-	SetCVar("nameplateSelfAlpha", 0)
-	C_NamePlate.SetNamePlateSelfClickThrough(true)
-
-	local f = CreateFrame("frame")
-	f:RegisterEvent("NAME_PLATE_UNIT_ADDED", "player")
-	f:RegisterEvent("NAME_PLATE_UNIT_REMOVED", "player")
-
-	f:SetScript("OnEvent", function(self, event, unit)
-		-- do nothing if the nameplate is not ours
-		if not UnitIsUnit(unit, "player") then return end
-
-		local namePlate = C_NamePlate.GetNamePlateForUnit(unit, issecure());
-		-- return if we're locked
-		if not namePlate or InCombatLockdown() then return end
-
-		oUF_sInterfacePlayer:ClearAllPoints()
-		if event == "NAME_PLATE_UNIT_ADDED" then
-			oUF_sInterfacePlayer:SetPoint("CENTER", namePlate, "CENTER", 0, -30)
-		else
-			oUF_sInterfacePlayer:SetPoint(unpack(E:C('uf', 'player', 'position')))
-		end
-	end)
+	-- emulatePersonalResourceDisplay used to anchor the player frame to the player's own
+	-- nameplate. On this client the Personal Resource Display is an Edit Mode frame, not a
+	-- nameplate (C_NamePlate.SetNamePlateSelfClickThrough is gone), so there is nothing to
+	-- follow: the frame stays at uf.player.position and the nameplate CVars are left alone.
 end
 
 oUF:Factory(function(self)

@@ -13,6 +13,10 @@ local t_remove = _G.table.remove
 
 local AbbreviateNumbers = _G.AbbreviateNumbers
 local BreakUpLargeNumbers = _G.BreakUpLargeNumbers
+-- UNIT_COMBAT carries no secret flags on this client, but stay safe if that changes:
+-- secrets may be formatted (AbbreviateNumbers/BreakUpLargeNumbers accept them) but not compared
+-- or used as table keys.
+local issecret = _G.issecretvalue or function() return false end
 
 -- sourced from FrameXML/Constants.lua
 local SCHOOL_MASK_NONE = _G.SCHOOL_MASK_NONE or 0x00
@@ -108,22 +112,27 @@ local function onShow(self)
 end
 
 local function Update(self, event, unit, message, flag, amount, school)
-	if self.unit ~= unit then return end
+	-- oUF 14 keeps the frame unit in .__unit (.unit is no longer set)
+	if self.__unit ~= unit then return end
+	if issecret(message) or issecret(flag) then return end
 
 	local element = self.FloatingCombatFeedback
 	local multiplier = 1
 	local text, color
 
 	if message == "WOUND" and not element.ignoreDamage then
-		if amount ~= 0	then
+		if issecret(amount) or amount ~= 0	then
 			if element.abbreviateNumbers then
 				text = "-"..AbbreviateNumbers(amount)
 			else
 				text = "-"..BreakUpLargeNumbers(amount)
 			end
 
-			color = element.schoolColors and element.schoolColors[school]
-				or schoolColors[school]
+			if not issecret(school) then
+				color = element.schoolColors and element.schoolColors[school]
+					or schoolColors[school]
+			end
+			color = color
 				or element.colors and element.colors[message]
 				or colors[message]
 
@@ -199,7 +208,7 @@ local function Path(self, ...)
 end
 
 local function ForceUpdate(element)
-	return Path(element.__owner, "ForceUpdate", element.__owner.unit)
+	return Path(element.__owner, "ForceUpdate", element.__owner.__unit)
 end
 
 local function Enable(self)

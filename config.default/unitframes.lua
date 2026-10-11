@@ -31,6 +31,8 @@ C["uf"] = {
 
 	-- Setting emulatePersonalResourceDisplay to true will ignore the player frame position,
 	-- instead, anchoring the player frame to the Personal Resource Display
+	-- WoW: Forever's Personal Resource Display is not a nameplate, so this has no effect there
+	-- and player.position is always used
 	emulatePersonalResourceDisplay = true,
 
 	-- Spacing between icons like combo points, arcane orbs, soul shards, etc.
@@ -38,7 +40,7 @@ C["uf"] = {
 
 	player = {
 		enabled = true,
-		position = { "CENTER", UIParent, "CENTER", 0, -175}, -- Unused if emulatePersonalResourceDisplay is set
+		position = { "CENTER", UIParent, "CENTER", 0, -175}, -- Unused if emulatePersonalResourceDisplay is set (and supported)
 		size = sizes.primary,
 		auras = {
 			enabled = true,
@@ -156,6 +158,7 @@ C["uf"] = {
 	},
 
 	-- buffs to track on the player unitframe
+	-- names are looked up as spells when you log in; spell IDs work too, e.g. [12345] = true
 	buffs = {
 		-- Unholy DK
 		["Sudden Doom"] = true,

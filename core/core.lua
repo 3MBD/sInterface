@@ -48,7 +48,9 @@ function E:RegisterAlphaAnimation(frame)
 		local delay = startDelay or 0.0
 		local enableMouse = toAlpha ~= 0 and true or false
 
-		if self.EnableMouse and not InCombatLockdown() then
+		-- textures and font strings accept EnableMouse on this client too; only frames
+		-- (unit frames, cast bars) should toggle mouse input with their alpha
+		if self.EnableMouse and self:IsObjectType("Frame") and not InCombatLockdown() then
 			self:EnableMouse(enableMouse)
 		end
 		self.alphaAnimation.alpha:SetStartDelay(delay)

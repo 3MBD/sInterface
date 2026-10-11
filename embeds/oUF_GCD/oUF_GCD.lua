@@ -1,5 +1,4 @@
 local _, ns = ...
-local cfg = ns.cfg
 local oUF = ns.oUF or oUF
 
 --[[
@@ -21,82 +20,52 @@ Example
 	self.GCD.Spark:SetWidth(10)
 	self.GCD.Spark:SetPoint('BOTTOMLEFT', self.Title, 'BOTTOMLEFT', -5, -5)
 
-	self.GCD.ReferenceSpellName = '***SEE BELOW***'
-
-You have to set a reference spell. You should choose one that has no cooldown
-except the global cooldown, and that cant be interrupted or silenced -- and
-it has to be one that's in your spellbook.
-
-Alternatively, you can add spells to the "referenceSpells" block at the top of
-this file and the addon will automatically choose the first one that you know. I'll add
-more spells to the list as I figure out what they are. For now, you can just add more
-spells to the list -- it doesnt matter where.
-
-Enjoy!
+The global cooldown is read from the dedicated "Global Cooldown" spell (61304), the same
+spell oUF's own castbar uses (embeds/oUF/elements/castbar.lua:91), so no per-class reference
+spell or spellbook scan is needed any more (GetNumSpellTabs/GetSpellTabInfo/GetSpellInfo/
+GetSpellCooldown/BOOKTYPE_SPELL no longer exist on this client).
 --]]
 
-local referenceSpells = {}
-referenceSpells["DEATHKNIGHT"] = 49998
-referenceSpells["DEMONHUNTER"] = 162243
-referenceSpells["DRUID"] = 5176
-referenceSpells["HUNTER"] = 193455
-referenceSpells["MAGE"] = 30449
-referenceSpells["MONK"] = 100780
-referenceSpells["PALADIN"] = 85256
-referenceSpells["PRIEST"] = 589
-referenceSpells["ROGUE"] = 53
-referenceSpells["SHAMAN"] = 192106
-referenceSpells["WARLOCK"] = 686
-referenceSpells["WARRIOR"] = 5308
-
-local spellId
-local hasInitialized = false
+local GCD_SPELL_ID = 61304
 local GetTime = GetTime
-local BOOKTYPE_SPELL = BOOKTYPE_SPELL
-local GetSpellCooldown = GetSpellCooldown
+local issecret = issecretvalue or function() return false end
 
-local Init = function()
-	local FindInSpellbook = function(spellId)
-		for tab = 1, GetNumSpellTabs() do
-			local _, _, offset, numSpells = GetSpellTabInfo(tab)
-			for i = (offset + 1), (offset + numSpells) do
-				local _, _, _, _, _, _, _spellId = GetSpellInfo(i, BOOKTYPE_SPELL)
-				if not (_spellId == nil) and (spellId == _spellId) then
-					return true
-				end
-			end
-		end
-		return false
-	end
-
-	local _, englishClass = UnitClass("player")
-	local _, _, _, _, _, _, _spellId = GetSpellInfo(referenceSpells[englishClass])
-
-	local found = false
-	if FindInSpellbook(_spellId) then
-		spellId = _spellId
-		found = true
-	else
-		print("oUF_GCD could not find spellId", _spellId, "for class", englishClass)
-	end
-
-	hasInitialized = true
-	return found
+local function GetGCDInfo()
+	return C_Spell.GetSpellCooldown(GCD_SPELL_ID)
 end
 
-
-local OnUpdateGCD
-do
-	OnUpdateGCD = function(self)
-		self.Spark:ClearAllPoints()
-		local perc = (GetTime() - self.starttime) / self.duration
-		if perc > 1 then
-			self:Hide()
-			return
-		else
-			self.Spark:SetPoint('CENTER', self, 'LEFT', self:GetWidth() * perc, 0)
-		end
+-- Plain-number path (unchanged maths from the original plugin).
+local OnUpdateGCD = function(self)
+	self.Spark:ClearAllPoints()
+	local perc = (GetTime() - self.starttime) / self.duration
+	if perc > 1 then
+		self:Hide()
+		return
+	else
+		self.Spark:SetPoint('CENTER', self, 'LEFT', self:GetWidth() * perc, 0)
 	end
+end
+
+-- Secret path: the client advances an invisible timer bar from a duration object and the spark
+-- follows its fill edge; we only poll the never-secret isActive flag to know when to hide.
+local OnUpdateGCDTimer = function(self)
+	local info = GetGCDInfo()
+	if not (info and info.isActive) then
+		self:Hide()
+	end
+end
+
+local function GetTimerBar(element)
+	local bar = element.__gcdTimer
+	if not bar then
+		bar = CreateFrame('StatusBar', nil, element)
+		bar:SetAllPoints(element)
+		bar:SetStatusBarTexture('Interface\\Buttons\\WHITE8X8')
+		bar:GetStatusBarTexture():SetAlpha(0)
+		bar:SetMinMaxValues(0, 1)
+		element.__gcdTimer = bar
+	end
+	return bar
 end
 
 local OnHideGCD = function(self)
@@ -105,29 +74,48 @@ local OnHideGCD = function(self)
 end
 
 local OnShowGCD = function(self)
-	self:SetScript('OnUpdate', OnUpdateGCD)
+	self:SetScript('OnUpdate', self.__secretTimer and OnUpdateGCDTimer or OnUpdateGCD)
 end
 
 local Update = function(self, event, unit)
-	if self.GCD then
-		if spellId == nil then
-			if hasInitialized or not Init() then
-				return
-			end
-		end
+	local element = self.GCD
+	if not element then return end
 
-		local start, dur = GetSpellCooldown(spellId)
+	local info = GetGCDInfo()
+	-- isActive is NeverSecret (SpellSharedDocumentation.lua SpellCooldownInfo)
+	if not (info and info.isActive) then
+		element:Hide()
+		return
+	end
 
-		if (not start) then return end
-		if (not dur) then dur = 0 end
-
-		if (dur == 0) then
-			self.GCD:Hide()
+	local start, dur = info.startTime, info.duration
+	if not issecret(start) and not issecret(dur) then
+		element.__secretTimer = nil
+		if element.__gcdTimer then element.__gcdTimer:Hide() end
+		if dur == 0 then
+			element:Hide()
 		else
-			self.GCD.starttime = start
-			self.GCD.duration = dur
-			self.GCD:Show()
+			element.starttime = start
+			element.duration = dur
+			element:Show()
+			element:SetScript('OnUpdate', OnUpdateGCD)
 		end
+	else
+		-- may return nothing; the duration object itself can carry secret values
+		local duration = C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(GCD_SPELL_ID)
+		if not (duration and Enum.StatusBarTimerDirection) then
+			element:Hide()
+			return
+		end
+
+		local bar = GetTimerBar(element)
+		bar:SetTimerDuration(duration, Enum.StatusBarInterpolation.Immediate, Enum.StatusBarTimerDirection.ElapsedTime)
+		bar:Show()
+		element.Spark:ClearAllPoints()
+		element.Spark:SetPoint('CENTER', bar:GetStatusBarTexture(), 'RIGHT', 0, 0)
+		element.__secretTimer = true
+		element:Show()
+		element:SetScript('OnUpdate', OnUpdateGCDTimer)
 	end
 end
 
@@ -139,6 +127,7 @@ local Enable = function(self)
 		self.GCD.duration = 0
 
 		self:RegisterEvent('ACTIONBAR_UPDATE_COOLDOWN', Update, true)
+		self:RegisterEvent('SPELL_UPDATE_COOLDOWN', Update, true)
 		self.GCD:SetScript('OnHide', OnHideGCD)
 		self.GCD:SetScript('OnShow', OnShowGCD)
 	end
@@ -146,7 +135,8 @@ end
 
 local Disable = function(self)
 	if (self.GCD) then
-		self:UnregisterEvent('ACTIONBAR_UPDATE_COOLDOWN')
+		self:UnregisterEvent('ACTIONBAR_UPDATE_COOLDOWN', Update)
+		self:UnregisterEvent('SPELL_UPDATE_COOLDOWN', Update)
 		self.GCD:Hide()
 	end
 end

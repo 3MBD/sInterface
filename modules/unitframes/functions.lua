@@ -6,7 +6,9 @@ createStatusbar = function(parent, tex, layer, height, width, r, g, b, alpha)
     if width then
         bar:SetWidth(width)
     end
-    bar:SetStatusBarTexture(tex, layer or "ARTWORK")
+    -- SetStatusBarTexture no longer takes a draw layer
+    bar:SetStatusBarTexture(tex)
+    bar:GetStatusBarTexture():SetDrawLayer(layer or "ARTWORK")
     if (r and b and g and alpha) then
 	    bar:SetStatusBarColor(r, g, b, alpha)
     end
