@@ -18,15 +18,22 @@ local map = {
 	UI_ERROR_MESSAGE = "errors",
 }
 
-local originalOnEvent = UIErrorsFrame:GetScript("OnEvent")
-UIErrorsFrame:SetScript("OnEvent", function(self, event, message, r, g, b, ...)
-	if not toBlock[map[event]] or not functionality_enabled then
-		return originalOnEvent(self, event, message, r, g, b, ...)
+-- Blocked message types are unregistered from UIErrorsFrame instead of wrapping its OnEvent
+-- script: a replaced script would run Blizzard's handler from addon (tainted) code.
+local function apply()
+	for event, category in next, map do
+		if toBlock[category] and functionality_enabled then
+			UIErrorsFrame:UnregisterEvent(event)
+		else
+			UIErrorsFrame:RegisterEvent(event)
+		end
 	end
-end)
+end
+apply()
 
 local toggle_enabled = function()
 	functionality_enabled = not functionality_enabled
+	apply()
 end
 
 SlashCmdList["TOGGLE"] = function() toggle_enabled() print("Errors shown: "..tostring(not functionality_enabled)) end
