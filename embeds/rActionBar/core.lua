@@ -40,9 +40,10 @@ end
 --3. p4, b-1, p5, bm3, bm4
 local function SetupButtonPoints(frame, buttonList, buttonWidth, buttonHeight, numCols, p1, fp1, fp2, p2, p3, bm1, bm2, p4, p5, bm3, bm4)
   for index, button in next, buttonList do
-    if not frame.__blizzardBar then
-      button:SetParent(frame)
-    end
+    --buttons now sit in per-button containers that Edit Mode scales and hides,
+    --so the buttons are always taken out of the Blizzard bar
+    button:SetParent(frame)
+    L:HookCooldownFlash(button)
     button:SetSize(buttonWidth, buttonHeight)
     button:ClearAllPoints()
     if index == 1 then
@@ -108,9 +109,10 @@ function L:CreateButtonFrame(cfg,buttonList,delaySetup)
   else
     SetupButtonFrame(frame, cfg.framePadding, buttonList, cfg.buttonWidth, cfg.buttonHeight, cfg.buttonMargin, cfg.numCols, cfg.startPoint)
   end
-  --reparent the Blizzard bar
+  --reparent the Blizzard bar: hidden, unless it has to stay visible for its OnUpdate.
+  --Edit Mode bars are only reparented, their Show/Hide/SetPoint are Lua overrides
   if cfg.blizzardBar then
-    cfg.blizzardBar:SetParent(frame)
+    cfg.blizzardBar:SetParent(cfg.blizzardBarKeepVisible and frame or L.hiddenFrame)
     cfg.blizzardBar:EnableMouse(false)
   end
   --show/hide the frame on a given state driver

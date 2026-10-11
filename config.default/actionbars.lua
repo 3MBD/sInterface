@@ -151,7 +151,7 @@ C["actionbars"] = {
 		buttonWidth     = 28,
 		buttonHeight    = 38,
 		buttonMargin    = 0,
-		numCols         = 12,
+		numCols         = 14, -- WoW: Forever has up to 14 micro buttons (was 12)
 		startPoint      = "LEFT",
 		mouseover       = true,
 	}

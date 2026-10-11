@@ -16,20 +16,22 @@ local A, L = ...
 
 local hiddenFrame = CreateFrame("Frame")
 hiddenFrame:Hide()
+L.hiddenFrame = hiddenFrame
 
 local scripts = {
   "OnShow", "OnHide", "OnEvent", "OnEnter", "OnLeave", "OnUpdate", "OnValueChanged", "OnClick", "OnMouseDown", "OnMouseUp",
 }
 
+--MainMenuBar became MainActionBar, an Edit Mode system: hide it by reparenting only and keep its
+--events and scripts, they drive the button grid (ACTIONBAR_SHOWGRID) of ActionButton1-12
 local framesToHide = {
-  MainMenuBar,
+  MainActionBar,
   OverrideActionBar,
 }
 
 local framesToDisable = {
-  MainMenuBar,
-  MicroButtonAndBagsBar, MainMenuBarArtFrame, StatusTrackingBarManager,
-  ActionBarDownButton, ActionBarUpButton, MainMenuBarVehicleLeaveButton,
+  MicroButtonAndBagsBar, StatusTrackingBarManager,
+  MainMenuBarVehicleLeaveButton,
   OverrideActionBar,
   OverrideActionBarExpBar, OverrideActionBarHealthBar, OverrideActionBarPowerBar, OverrideActionBarPitchFrame,
 }
@@ -49,14 +51,8 @@ end
 
 --L:HideMainMenuBar
 function L:HideMainMenuBar()
-  --bring back the currency
-  local function OnEvent(self,event)
-    TokenFrame_LoadUI()
-    TokenFrame_Update()
-    BackpackTokenFrame_Update()
-  end
-  hiddenFrame:SetScript("OnEvent",OnEvent)
-  hiddenFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+  --the currency workaround (TokenFrame_Update on CURRENCY_DISPLAY_UPDATE) is gone: those functions
+  --no longer exist and the currency display no longer depends on the main menu bar
   for i, frame in next, framesToHide do
     frame:SetParent(hiddenFrame)
   end
@@ -67,12 +63,27 @@ function L:HideMainMenuBar()
 end
 
 --fix blizzard cooldown flash
+local issecretvalue = issecretvalue or function() return false end
+
 local function FixCooldownFlash(self)
   if not self then return end
-  if self:GetEffectiveAlpha() > 0 then
+  --the effective alpha is secret when a parent's alpha was set from secret values
+  local alpha = self:GetEffectiveAlpha()
+  if issecretvalue(alpha) then return end
+  if alpha > 0 then
     self:Show()
   else
     self:Hide()
   end
 end
-hooksecurefunc(getmetatable(ActionButton1Cooldown).__index, "SetCooldown", FixCooldownFlash)
+
+--only for the buttons rActionBar owns: a hook on the shared Cooldown metatable ran for every
+--cooldown in the UI, including Blizzard frames with secret alpha
+local hookedCooldowns = {}
+function L:HookCooldownFlash(button)
+  local cooldown = button.cooldown
+  if cooldown and not hookedCooldowns[cooldown] then
+    hookedCooldowns[cooldown] = true
+    hooksecurefunc(cooldown, "SetCooldown", FixCooldownFlash)
+  end
+end

@@ -9,6 +9,7 @@
 local A, L = ...
 
 local SpellFlyout = SpellFlyout
+local issecretvalue = issecretvalue or function() return false end
 
 -----------------------------
 -- Functions
@@ -66,6 +67,13 @@ function L:StartFadeOut(frame)
   frame.fader:Play()
 end
 
+--MouseIsOver() was removed; regions answer it themselves (the answer is only secret for regions
+--anchored with secret values)
+local function MouseIsOver(region)
+  local isOver = region:IsMouseOver()
+  return not issecretvalue(isOver) and isOver
+end
+
 local function IsMouseOverFrame(frame)
   if MouseIsOver(frame) then return true end
   if not SpellFlyout:IsShown() then return false end
@@ -100,8 +108,10 @@ local function OnHide(self)
 end
 
 local function SpellFlyoutOnShow(self)
-  local frame = self:GetParent():GetParent():GetParent()
-  if not frame.fader then return end
+  --the flyout is parented to the action button that opened it, and the button to the bar frame
+  local owner = self:GetParent()
+  local frame = owner and owner.__faderParent
+  if not frame or not frame.fader then return end
   --set new frame parent
   self.__faderParent = frame
   if not self.__faderHook then
@@ -109,9 +119,8 @@ local function SpellFlyoutOnShow(self)
     SpellFlyout:HookScript("OnLeave", OffFrameHandler)
     self.__faderHook = true
   end
-  for i=1, NUM_ACTIONBAR_BUTTONS do --hopefully 12 is enough
-    local button = _G["SpellFlyoutButton"..i]
-    if not button then break end
+  --the flyout buttons are unnamed and pooled now
+  for _, button in next, { self:GetChildren() } do
     button.__faderParent = frame
     if not button.__faderHook then
       button:HookScript("OnEnter", OffFrameHandler)
