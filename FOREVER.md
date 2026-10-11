@@ -82,9 +82,11 @@ Static checks, all run on the packaged files:
   ships but is not loaded, exactly as in the original.
 - **Reviewed against the client sources:** every module was audited line by line against the
   Blizzard UI source and the generated API documentation (frame names, mixin methods, templates,
-  secret-value flags). Unit frames and action bars were then reviewed a second time by
-  independent reviewers. The core, config, packaging and skin code did not get a separate audit
-  and was checked by hand and with the tools above.
+  secret-value flags). Unit frames and action bars were then reviewed a second time by an
+  independent reviewer. A second review of chat, tooltips, auras, errors, minimap and the small
+  modules was started and then cancelled to save cost, so those modules have had one audit
+  only. The core, config, packaging and skin code did not get a separate audit and was checked
+  by hand and with the tools above.
 
 None of these checks runs the client. They cannot prove that frames look right, that secret values
 are handled correctly in every combat situation, or that nothing taints the default UI. Only the
