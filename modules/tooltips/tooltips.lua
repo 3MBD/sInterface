@@ -6,16 +6,8 @@ if not E:C('tooltips', 'enabled') then return end
 local unpack, type = unpack, type
 local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 local GameTooltip = GameTooltip
+-- secret values exist only on the 12.x engine; elsewhere nothing is ever secret
 local issecretvalue = issecretvalue or function() return false end
-
--- Unit names, races, creature types and tooltip lines can be secret values on
--- WoW: Forever (always for NPCs). Lines built from them are left as Blizzard wrote them.
-local function anySecret(...)
-	for i = 1, select('#', ...) do
-		if issecretvalue((select(i, ...))) then return true end
-	end
-	return false
-end
 
 GameTooltipStatusBar:ClearAllPoints()
 GameTooltipStatusBar:Hide()
@@ -66,38 +58,76 @@ local left = setmetatable({}, { __index = function(left, i)
 end })
 
 local function GetMouseFocusUnit()
+	-- GetMouseFocus was replaced by GetMouseFoci
 	local focus = GetMouseFoci()[1]
-	if focus and focus.GetAttribute then
-		return focus:GetAttribute("unit")
+	if focus and not focus:IsForbidden() and focus.GetAttribute then
+		local unit = focus:GetAttribute("unit")
+		if not issecretvalue(unit) and type(unit) == "string" then
+			return unit
+		end
 	end
 end
 
-local function OnTooltipSetUnit(self, ...)
-	local unit = select(2, self:GetUnit()) or GetMouseFocusUnit() or (UnitExists("mouseover") and "mouseover")
-	if not unit or issecretvalue(unit) then return end
+-- Never boolean-test / compare a value before issecretvalue() has cleared it.
+local function GetTooltipUnit(data)
+	local unit
+	-- tooltipData.guid may be secret (unit identity); do not call tooltip:GetUnit() here,
+	-- TooltipUtil.GetDisplayedUnit boolean-tests guid/unit in our tainted execution
+	local guid = data and data.guid
+	if not issecretvalue(guid) and guid then
+		unit = UnitTokenFromGUID(guid)
+	end
+	if issecretvalue(unit) or not unit then
+		unit = GetMouseFocusUnit() or (UnitExists("mouseover") and "mouseover") or nil
+	end
+	return unit
+end
+
+local UNIT_LEVEL_LINE = Enum.TooltipDataLineType.UnitLevel
+
+local function FindLevelLine(data)
+	if not (data and data.lines) then return end
+	for _, lineData in ipairs(data.lines) do
+		local lineType, lineIndex = lineData.type, lineData.lineIndex
+		if not issecretvalue(lineType) and lineType == UNIT_LEVEL_LINE
+			and not issecretvalue(lineIndex) and type(lineIndex) == "number" then
+			return lineIndex
+		end
+	end
+end
+
+local function OnTooltipSetUnit(self, data)
+	local unit = GetTooltipUnit(data)
+	if not unit then return end
+	local numLines = self:NumLines()
 	local line = 1
 	if UnitIsPlayer(unit) then
 		local name, realm = UnitName(unit)
+		-- WoW: Forever returns the character's surname where the realm used to be; show the
+		-- client's own "name surname" display name instead of "name of surname"
+		if NameUtil and NameUtil.FormatUnitNameForDisplay then
+			name, realm = NameUtil.FormatUnitNameForDisplay(unit), nil
+		end
 		local _, unitClass = UnitClass(unit)
-		if anySecret(name, realm, unitClass) then return end
-		local classColor = RAID_CLASS_COLORS[unitClass]
-		if not classColor then return end
+		local classColor = (not issecretvalue(unitClass)) and unitClass and RAID_CLASS_COLORS[unitClass]
 
-		if realm then
-			left[line]:SetFormattedText("|cff%02x%02x%02x%s %s %s|r", classColor.r * 255, classColor.g * 255, classColor.b * 255, name, 'of', realm)
-		else
-			left[line]:SetFormattedText("|cff%02x%02x%02x%s|r", classColor.r * 255, classColor.g * 255, classColor.b * 255, name)
+		if classColor then
+			if issecretvalue(realm) or realm then
+				left[line]:SetFormattedText("|cff%02x%02x%02x%s %s %s|r", classColor.r * 255, classColor.g * 255, classColor.b * 255, name, 'of', realm)
+			else
+				left[line]:SetFormattedText("|cff%02x%02x%02x%s|r", classColor.r * 255, classColor.g * 255, classColor.b * 255, name)
+			end
 		end
 		line = line + 1
 
 		local guild = GetGuildInfo(unit)
-		if guild and not issecretvalue(guild) and left[line] then
+		if (issecretvalue(guild) or guild) and line <= numLines then
 			left[line]:SetFormattedText('|cff%02x%02x%02x%s|r', 255, 213, 131, guild)
 			line = line + 1
 		end
 
 		local level, race = UnitLevel(unit), UnitRace(unit)
-		if anySecret(level, race) or not left[line] then return end
+		if issecretvalue(level) or line > numLines then return end
 		local difficultyColor
 		level = level > 0 and level or '??'
 		if level == '??' then
@@ -105,6 +135,7 @@ local function OnTooltipSetUnit(self, ...)
 		else
 			difficultyColor = GetQuestDifficultyColor(level)
 		end
+		if not issecretvalue(race) and race == nil then race = "" end
 
 		left[line]:SetFormattedText('|cff%02x%02x%02x%s|r %s', difficultyColor.r * 255, difficultyColor.g * 255, difficultyColor.b * 255, level, race)
 	else
@@ -112,33 +143,44 @@ local function OnTooltipSetUnit(self, ...)
 		left[line]:SetText(name)
 		line = line + 1
 
-		local info = left[line] and left[line]:GetText()
-		if not info then return GameTooltip:Show() end
-		if issecretvalue(info) then return end
+		local levelLine = FindLevelLine(data)
+		if levelLine and levelLine > 1 then
+			line = levelLine
+		else
+			if line > numLines then return end
+			local info = left[line]:GetText()
+			if issecretvalue(info) then return end -- cannot inspect; Blizzard's line stays as rendered
+			-- the post-call runs before Blizzard shows the tooltip, so it is not shown here
+			if not info then return end
 
-		if not strmatch(info, "Level") and not strmatch(info, "Pet Level") then
-			line = line + 1
+			if not strmatch(info, "Level") and not strmatch(info, "Pet Level") then
+				line = line + 1
+			end
 		end
+		if line > numLines then return end
 
 		local level, race = UnitLevel(unit), UnitCreatureType(unit)
-		if anySecret(level, race) or not left[line] then return end
+		if issecretvalue(level) then return end
 		level = level == -1 and '??' or level
 		local color = type(level) == 'number' and GetQuestDifficultyColor(level) or { r = 1, g = 0.5, b = 0.5 }
-		if level and race then
+		if level and (issecretvalue(race) or race) then
 			left[line]:SetFormattedText('|cff%02x%02x%02x%s|r %s', color.r * 255, color.g * 255, color.b * 255, level, race)
 		end
 	end
 end
 
--- OnTooltipSetUnit was replaced by tooltip data post-calls in 10.0.2
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, ...)
+-- OnTooltipSetUnit no longer fires: unit tooltips are built in Lua by TooltipDataHandlerMixin.
+-- ProcessInfo calls tooltip:Show() itself right after the post-calls.
+TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 	if tooltip ~= GameTooltip then return end
-	OnTooltipSetUnit(tooltip, ...)
+	OnTooltipSetUnit(tooltip, data)
 end)
 
 
--- ShoppingTooltip3, WorldMapTooltip and SmallTextTooltip no longer exist
-local tooltips = { GameTooltip, ItemRefTooltip, ShoppingTooltip1, ShoppingTooltip2 }
+local tooltips = {}
+for _, name in ipairs({ "GameTooltip", "ItemRefTooltip", "ShoppingTooltip1", "ShoppingTooltip2", "ShoppingTooltip3", "WorldMapTooltip", "SmallTextTooltip" }) do
+	if _G[name] then tooltips[#tooltips + 1] = _G[name] end
+end
 
 for _, tooltip in ipairs(tooltips) do
 	tooltip.style = CreateFrame("Frame", nil, tooltip, BackdropTemplateMixin and "BackdropTemplate" or nil)
@@ -152,15 +194,12 @@ for _, tooltip in ipairs(tooltips) do
 	end
 
 	if (tooltip.style and tooltip.NineSlice) then
+		-- SharedTooltip_SetBackdropStyle re-Shows NineSlice on every hide/restyle; Blizzard never
+		-- changes its alpha, so alpha 0 keeps it invisible (no blinking) without replacing a
+		-- Blizzard method (the old NineSlice.Show override tainted GameTooltip_OnHide).
 		tooltip.NineSlice:Hide()
+		tooltip.NineSlice:SetAlpha(0)
 	end
 
 	SetBackdropStyle(tooltip)
 end
-
--- Blizzard re-shows the default border whenever a tooltip's style is (re)applied
-hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tooltip)
-	if tooltip.style and tooltip.NineSlice then
-		tooltip.NineSlice:Hide()
-	end
-end)
