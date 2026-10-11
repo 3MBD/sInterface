@@ -30,20 +30,21 @@ end)
 MinimapCompassTexture:SetAlpha(0)
 MinimapCompassTextureUnderlay:SetAlpha(0)
 MinimapCluster.BorderTop:Hide()
--- WoW: Forever's day/night ring is drawn around the default round minimap
-if MinimapCluster.DielFrame then MinimapCluster.DielFrame:Hide() end
 
 -- Zoom
 local zoomIn = Minimap.ZoomIn
 local zoomOut = Minimap.ZoomOut
 Minimap:EnableMouseWheel(true)
-Minimap:SetScript("OnMouseWheel", function(self, direction)
-	if direction > 0 then
-		zoomIn:Click()
-	elseif direction < 0 then
-		zoomOut:Click()
-	end
-end)
+-- the minimap's own OnMouseWheel already zooms through the (hidden) zoom buttons
+if not Minimap.OnMouseWheel then
+	Minimap:SetScript("OnMouseWheel", function(self, direction)
+		if direction > 0 then
+			zoomIn:Click()
+		elseif direction < 0 then
+			zoomOut:Click()
+		end
+	end)
+end
 zoomIn:Hide()
 zoomOut:Hide()
 -- the buttons are shown again whenever the cursor enters the minimap
@@ -60,6 +61,8 @@ zoomOut:HookScript("OnShow", zoomOut.Hide)
 MinimapCluster.ZoneTextButton:Hide()
 if (E:C('minimap', 'zoneText')) then
 	MinimapZoneText:SetFontObject("GameFontNormalOutline")
+	-- drop its anchor to the hidden zone button
+	MinimapZoneText:ClearAllPoints()
 	MinimapZoneText:SetPoint("LEFT", Minimap, "LEFT", 0, 0)
 	MinimapZoneText:SetPoint("RIGHT", Minimap, "RIGHT", 0, 0)
 	MinimapZoneText:SetPoint("BOTTOM", Minimap, "TOP", 0, -5)
@@ -90,35 +93,47 @@ ExpansionLandingPageMinimapButton:UnregisterAllEvents();
 
 -- Tracking
 local tracking = MinimapCluster.Tracking
+-- the tracking icon is the button's own texture now, so only the round background is faded
 tracking.Background:SetAlpha(0)
-tracking.Button:SetAlpha(0)
+tracking:SetParent(Minimap)
 tracking:ClearAllPoints()
 tracking:SetPoint("TOPRIGHT", Minimap, 0, 0)
 tracking:SetScale(.9)
 
 -- Mail
+-- the mail icon is laid out by the indicator row it sits in, so the whole row is moved. Blizzard
+-- re-anchors the row when tracking is shown or hidden and when the header is flipped.
 local indicators = MinimapCluster.IndicatorFrame
-local mail = indicators.MailFrame
--- the indicator row lays its icons out again whenever mail arrives; move the mail icon back
--- afterwards (flagging it ignoreInLayout would taint Blizzard's layout code)
-local function anchorMail()
-	mail:ClearAllPoints()
-	mail:SetPoint("TOPLEFT", Minimap, 0, 0)
+indicators:SetParent(Minimap)
+local function anchorIndicators()
+	indicators:ClearAllPoints()
+	indicators:SetPoint("TOPLEFT", Minimap, "TOPLEFT", 0, 0)
 end
-anchorMail()
-hooksecurefunc(indicators, "Layout", anchorMail)
-mail:SetFrameStrata("LOW")
-MiniMapMailIcon:SetTexture("Interface\\Minimap\\ObjectIcons.blp")
-MiniMapMailIcon:SetTexCoord(0.875, 1, 0.25, 0.375)
+anchorIndicators()
+hooksecurefunc("MiniMapIndicatorFrame_UpdatePosition", anchorIndicators)
+hooksecurefunc(MinimapCluster, "SetHeaderUnderneath", anchorIndicators)
+indicators.MailFrame:SetFrameStrata("LOW")
+if MiniMapMailIcon:SetTexture("Interface\\Minimap\\ObjectIcons.blp") then
+	MiniMapMailIcon:SetTexCoord(0.875, 1, 0.25, 0.375)
+else
+	-- keep Blizzard's envelope if this client does not have the old icon sheet
+	MiniMapMailIcon:SetAtlas("ui-hud-minimap-mail-up", true)
+end
 
 -- Queues
--- an Edit Mode system; Blizzard re-anchors it to the minimap whenever the layout changes
+-- an Edit Mode system. Edit Mode re-anchors it in several places (layout changes, its default
+-- anchor, minimap scale changes), all of them through its SetPoint, so it is moved back after that.
+QueueStatusButton:SetParent(Minimap)
+local anchoringQueueStatusButton = false
 local function anchorQueueStatusButton()
+	if anchoringQueueStatusButton then return end
+	anchoringQueueStatusButton = true
 	E:ClearAllPoints(QueueStatusButton)
 	E:SetPoint(QueueStatusButton, "BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", 0, 0)
+	anchoringQueueStatusButton = false
 end
 anchorQueueStatusButton()
-hooksecurefunc(QueueStatusButton, "UpdateDefaultAnchor", anchorQueueStatusButton)
+hooksecurefunc(QueueStatusButton, "SetPoint", anchorQueueStatusButton)
 
 -- Instance
 local instanceDifficulty = MinimapCluster.InstanceDifficulty
@@ -129,5 +144,25 @@ instanceDifficulty:SetParent(hider)
 
 -- World Map
 -- the minimap no longer has a world map button
+
+-- Addon compartment
+-- anchored to the calendar button, which is hidden above
+if AddonCompartmentFrame then
+	AddonCompartmentFrame:ClearAllPoints()
+	AddonCompartmentFrame:SetPoint("TOPRIGHT", tracking, "BOTTOMRIGHT", 0, -2)
+end
+
+-- Day/night indicator (WoW: Forever)
+-- it would otherwise float where the round minimap used to be. Blizzard moves it again whenever
+-- the minimap cluster's Edit Mode scale is applied.
+local dielFrame = MinimapCluster.DielFrame
+if dielFrame then
+	local function anchorDielFrame()
+		dielFrame:ClearAllPoints()
+		dielFrame:SetPoint("BOTTOMLEFT", Minimap, "BOTTOMLEFT", 0, 0)
+	end
+	anchorDielFrame()
+	hooksecurefunc(MinimapCluster, "SetEditModeScale", anchorDielFrame)
+end
 
 E:ShadowedBorder(Minimap)

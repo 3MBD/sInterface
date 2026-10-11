@@ -21,7 +21,9 @@ local function style(mir, mirSB, mirT)
 
 	E:ShadowedBorder(mirSB)
 	mirSB:SetStatusBarTexture(E:C('general', 'texture'))
-	mirSB:SetSize(mir:GetWidth(), mir:GetHeight()/3)
+	-- a third of the 26px timer frame of the old default UI; the frame is taller now to fit a
+	-- text box under the bar
+	mirSB:SetSize(mir:GetWidth(), 26/3)
 
 	mirT:ClearAllPoints()
 	mirT:SetPoint("CENTER", mir, "TOP", 0, 0)

@@ -336,5 +336,6 @@ read_globals = {
 	"AbbreviateNumbers",
 	"BottomManagedFrameContainer",
 	"Constants",
-	"GetCVar"
+	"GetCVar",
+	"AddonCompartmentFrame"
 }
