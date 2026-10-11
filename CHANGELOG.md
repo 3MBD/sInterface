@@ -39,7 +39,10 @@ configuration and features to that client. It adds no new features.
   red "value | NN%" and green full-health look.
 - Cast bar: the "elapsed | total" (channels: "remaining | total") time text is formatted by the
   client, and the red pushback text is kept. Uninterruptible enemy casts are still grey, and
-  interrupted or failed casts still turn red and fade.
+  interrupted or failed casts still turn red and fade. The secret grey/colour choice for enemy
+  casts is applied to the bar's fill only, so the fade animation keeps working.
+- Group buttons created during combat get their click registration (right-click menu) when
+  combat ends.
 - Party, raid and main-tank headers use `SetVisibility`. Before this, the shifted
   `SpawnHeader` arguments meant no group frames were shown. Blizzard raid frames are blocked
   the way oUF blocks its other frames.
@@ -67,6 +70,8 @@ configuration and features to that client. It adds no new features.
 - The bag bar includes Forever's reagent bag and key ring buttons, and keeps its layout when
   Blizzard re-lays out the bags.
 - When the UI loads during combat, setup waits until combat ends.
+- The key ring button keeps the configured button size when Blizzard lays out the bags, and the
+  cooldown flash fix covers the charge and loss-of-control cooldowns as well.
 
 ### Other modules
 

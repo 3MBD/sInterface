@@ -54,7 +54,14 @@ function E:RegisterAlphaAnimation(frame)
 			self:EnableMouse(enableMouse)
 		end
 		self.alphaAnimation.alpha:SetStartDelay(delay)
-		self.alphaAnimation.alpha:SetFromAlpha(self:GetAlpha())
+		-- an object that was given a secret colour reports a secret alpha, which the animation
+		-- refuses as a start value: use the last alpha set here instead
+		local fromAlpha = self:GetAlpha()
+		if issecretvalue and issecretvalue(fromAlpha) then
+			fromAlpha = self.sInterfaceAlpha or 1
+		end
+		self.sInterfaceAlpha = toAlpha
+		self.alphaAnimation.alpha:SetFromAlpha(fromAlpha)
 		self.alphaAnimation.alpha:SetToAlpha(toAlpha)
 		self.alphaAnimation:SetToFinalAlpha(toAlpha)
 		self.alphaAnimation:Play()

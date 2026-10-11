@@ -80,10 +80,13 @@ end
 --only for the buttons rActionBar owns: a hook on the shared Cooldown metatable ran for every
 --cooldown in the UI, including Blizzard frames with secret alpha
 local hookedCooldowns = {}
+local cooldownKeys = { "cooldown", "chargeCooldown", "lossOfControlCooldown" }
 function L:HookCooldownFlash(button)
-  local cooldown = button.cooldown
-  if cooldown and not hookedCooldowns[cooldown] then
-    hookedCooldowns[cooldown] = true
-    hooksecurefunc(cooldown, "SetCooldown", FixCooldownFlash)
+  for _, key in next, cooldownKeys do
+    local cooldown = button[key]
+    if cooldown and cooldown.SetCooldown and not hookedCooldowns[cooldown] then
+      hookedCooldowns[cooldown] = true
+      hooksecurefunc(cooldown, "SetCooldown", FixCooldownFlash)
+    end
   end
 end

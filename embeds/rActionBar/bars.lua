@@ -47,6 +47,12 @@ function rActionBar:CreateBagBar(addonName,cfg)
   for _, button in next, buttonList do
     anchors[button] = { button:GetPoint(1) }
     hooksecurefunc(button, "SetPoint", RestorePoint)
+    if button.UpdateOrientation then
+      --the key ring is resized to its own 33x45 whenever the bags are laid out
+      hooksecurefunc(button, "UpdateOrientation", function(self)
+        self:SetSize(cfg.buttonWidth, cfg.buttonHeight)
+      end)
+    end
   end
 end
 

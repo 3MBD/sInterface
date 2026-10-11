@@ -392,15 +392,23 @@ local PostCastStart = function(self, unit, _, notInterruptible)
 	SetCastTimeFormat(self, not isCasting)
 
 	local color = isCasting and self.CastingColorObject or self.ChannelingColorObject
+	local colorIsSecret = false
 	if unit ~= 'player' and UnitCanAttack('player', unit) then
 		-- notInterruptible is secret for units other than the player and pet
 		if issecretvalue(notInterruptible) then
 			color = C_CurveUtil.EvaluateColorFromBoolean(notInterruptible, NOT_INTERRUPTIBLE_COLOR, color)
+			colorIsSecret = true
 		elseif notInterruptible then
 			color = NOT_INTERRUPTIBLE_COLOR
 		end
 	end
-	self:SetStatusBarColor(color:GetRGB())
+	if colorIsSecret then
+		-- a secret colour given to the bar itself makes its GetAlpha() secret too, and the fade
+		-- animation cannot take that as its start value: colour only the fill texture
+		self:GetStatusBarTexture():SetVertexColor(color:GetRGB())
+	else
+		self:SetStatusBarColor(color:GetRGB())
+	end
 
 	local parent = self:GetParent()
 	local anchor
@@ -677,6 +685,16 @@ local PhaseIndicator = function(self)
 end
 
 -- oUF passes the unit to style functions; it no longer sets self.unit (Blizzard code reads it)
+local pendingClicks = {}
+local clickRetry = CreateFrame('Frame')
+clickRetry:SetScript('OnEvent', function(retry)
+	retry:UnregisterEvent('PLAYER_REGEN_ENABLED')
+	for frame in next, pendingClicks do
+		frame:RegisterForClicks'AnyUp'
+		pendingClicks[frame] = nil
+	end
+end)
+
 local Shared = function(self, unit)
 	unit = unit:match('^(.-)%d+') or unit
 
@@ -687,7 +705,11 @@ local Shared = function(self, unit)
 	local height = E:C('uf', unit, 'size', 'height')
 	-- group members can be styled during combat; their size is set securely by
 	-- oUF-initialConfigFunction
-	if not InCombatLockdown() then
+	if InCombatLockdown() then
+		-- RegisterForClicks is protected: do it when combat ends
+		pendingClicks[self] = true
+		clickRetry:RegisterEvent('PLAYER_REGEN_ENABLED')
+	else
 		self:RegisterForClicks'AnyUp'
 		self:SetSize(width, height)
 	end
