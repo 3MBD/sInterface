@@ -36,6 +36,10 @@ the addon may need another pass.
    Make sure the TOC is not one folder too deep (`sInterface\sInterface\sInterface.toc`).
 4. Start the game and open **AddOns** on the character screen. sInterface should be listed and
    enabled, and should not be marked "Out of date". You do not need **Load out of date AddOns**.
+   If it is listed as "Incompatible", type this in chat and send me the line it prints (the fifth
+   value is the exact reason the client gives):
+
+       /run print(C_AddOns.GetAddOnInfo("sInterface"))
 5. **Personal settings:** if you keep your settings in your own `sInterface_Config` addon (the
    optional addon that defines the `sInterface_Config` table), change that addon's `.toc` to
    `## Interface: 16001`. Otherwise the client skips it and sInterface uses its defaults. The

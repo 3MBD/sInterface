@@ -1,4 +1,5 @@
 ## Interface: 16001
+## AllowLoadGameType: standard, camelot
 ## Version: @project-version@
 ## Author: sbaildon <sean@baildon.co>
 ## Title: sInterface

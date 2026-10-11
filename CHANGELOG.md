@@ -17,7 +17,9 @@ configuration and features to that client. It adds no new features.
     then repaired as described below
 - oUF_Smooth is no longer loaded or shipped. oUF 14 smooths bars natively and secret-safely
   (`.smoothing`), and the Lua smoothing cannot work with secret values.
-- `## Interface: 16001`.
+- `## Interface: 16001`, `## AllowLoadGameType: standard, camelot` (as oUF declares), and a second
+  `sInterface_Camelot.toc`, the flavour TOC the Forever client prefers. Without them the client can
+  list the addon as "Incompatible".
 - License notices added: `embeds/rLib/LICENSE.md` and `embeds/rActionBar/LICENSE.md` (MIT,
   zork), and `media/OFL-AlegreyaSans.txt` and `media/OFL-FrancoisOne.txt` (fonts). See
   `LICENSING-ISSUES.md` in the source repository for open questions.

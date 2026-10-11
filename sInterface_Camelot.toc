@@ -1,0 +1,15 @@
+## Interface: 16001
+## AllowLoadGameType: standard, camelot
+## Version: @project-version@
+## Author: sbaildon <sean@baildon.co>
+## Title: sInterface
+## Notes: An opinionated UI replacement
+## OptionalDeps: sInterface_Config
+
+## X-WoWI-ID: 24674
+
+init.lua
+embeds\_embeds.xml
+config.default\_config.xml
+core\_core.xml
+modules\_modules.xml
