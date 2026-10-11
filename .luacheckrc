@@ -337,5 +337,7 @@ read_globals = {
 	"BottomManagedFrameContainer",
 	"Constants",
 	"GetCVar",
-	"AddonCompartmentFrame"
+	"AddonCompartmentFrame",
+	"CastingBarType",
+	"UnitChannelInfo"
 }

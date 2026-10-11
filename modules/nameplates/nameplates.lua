@@ -7,6 +7,12 @@ if not E:C('nameplates', 'enabled') then return end;
 -- again whenever an option, style or CVar changes. The skin is therefore applied from
 -- post-hooks on those layout functions instead of the old DefaultCompactNamePlate* setup
 -- functions, and it never writes to Blizzard's tables.
+if not (NamePlateUnitFrameMixin and NamePlateUnitFrameMixin.UpdateAnchors
+	and NamePlateCastingBarMixin and NamePlateCastingBarMixin.UpdateBarFillTexture
+	and NamePlateAuraItemMixin and NamePlateAuraItemMixin.OnLoad) then
+	print("|cffff6060sInterface|r: nameplate styling disabled - Blizzard nameplate API not found on this client.")
+	return
+end
 
 local issecretvalue = issecretvalue or function() return false end
 
@@ -24,7 +30,9 @@ for eclass, color in next, FACTION_BAR_COLORS do
 end
 
 local texture = E:C('general', 'texture')
-local styled = setmetatable({}, { __mode = "k" })
+
+local styled = setmetatable({}, { __mode = "k" })   -- plates that already have their borders
+local deferred = setmetatable({}, { __mode = "k" }) -- plates whose layout waits for combat to end
 
 -- compact unit frame functions also run for party and raid frames
 local function IsNamePlate(frame)
@@ -42,18 +50,24 @@ local function TintBackground(healthBar, r, g, b)
 	end
 end
 
--- reaction colours, or threat colours for tanks; Blizzard keeps colouring players
-local function UpdateHealthColor(frame)
+-- Blizzard colours the bar last in CompactUnitFrame_UpdateHealthColor (the aggro flash only
+-- toggles a texture). Reaction colours, or threat colours for tanks; players keep Blizzard's.
+hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
 	if not IsNamePlate(frame) or not frame.unit then return end
+	local healthBar = frame.healthBar
 
 	if not UnitIsPlayer(frame.unit) then
-		local status = UnitThreatSituation("player", frame.unit)
-		if issecretvalue(status) then status = nil end
+		local status
+		if E:C('nameplates', 'tankMode') and E:PlayerIsTank() then
+			status = UnitThreatSituation("player", frame.unit)
+			-- secret when the threat state is restricted: fall back to the reaction colour
+			if issecretvalue(status) then status = nil end
+		end
 
 		local r, g, b
-		if (not (E:C('nameplates', 'tankMode') and E:PlayerIsTank())) or (status == nil) then
+		if status == nil then
 			local reaction = UnitReaction(frame.unit, "player")
-			reaction = not issecretvalue(reaction) and colours.reaction[reaction]
+			reaction = reaction and not issecretvalue(reaction) and colours.reaction[reaction]
 			if reaction then
 				r, g, b = unpack(reaction)
 			end
@@ -66,22 +80,17 @@ local function UpdateHealthColor(frame)
 		end
 
 		if r then
-			frame.healthBar:SetStatusBarColor(r, g, b)
+			healthBar:SetStatusBarColor(r, g, b)
 		end
 	end
 
-	TintBackground(frame.healthBar, frame.healthBar:GetStatusBarColor())
-end
-
--- threat updates run the aggro flash first and Blizzard's health colour afterwards, so both
--- are hooked to keep these colours on top
-hooksecurefunc("CompactUnitFrame_UpdateAggroFlash", UpdateHealthColor)
-hooksecurefunc("CompactUnitFrame_UpdateHealthColor", UpdateHealthColor)
+	TintBackground(healthBar, healthBar:GetStatusBarColor())
+end)
 
 hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
 	if not IsNamePlate(frame) or not frame.unit then return end
 	if UnitIsPlayer(frame.unit) then
-		frame.name:SetText(UnitName(frame.unit))
+		frame.name:SetText((UnitName(frame.unit)))
 	end
 	frame.name:SetTextColor(1, 1, 1, 1)
 end)
@@ -102,27 +111,42 @@ local function Style(namePlate)
 	E:ShadowedBorder(castBar)
 	E:ShadowedBorder(castBar.Icon)
 
-	namePlate.name:SetParent(healthBar)
+	-- the name stays a child of the plate: unlike the health bar it is also shown for plates
+	-- that only show a name
 	namePlate.selectionHighlight:SetAlpha(0)
 
 	styled[namePlate] = true
 end
 
--- every layout pass resets textures, fonts and anchors
-local function Layout(namePlate)
-	if namePlate:IsForbidden() then return end
-	if not styled[namePlate] then Style(namePlate) end
-
+-- Textures, fonts and draw layers. Blizzard resets them on every layout pass.
+local function ApplyLook(namePlate)
 	local healthBar = namePlate.healthBar
 	local castBar = namePlate.CastBarsContainer.castBar
-	local font, size, flags = GameFontNormalOutline:GetFont()
+	local font, _, flags = GameFontNormalOutline:GetFont()
 
-	healthBar:SetStatusBarTexture(texture)
+	healthBar.barTexture:SetTexture(texture)
 	local background = healthBar.bgTexture
 	background:SetTexture(texture)
 	background:SetTextureSliceMargins(0, 0, 0, 0)
 	background:SetTexCoord(0, 1, 0, 1)
 	background:SetDrawLayer("BACKGROUND")
+
+	-- sInterface's font face and outline, at the size Blizzard computes from the nameplate
+	-- size settings
+	local _, castSize = castBar.Text:GetFont()
+	castBar.Text:SetFont(font, castSize, flags)
+	local _, nameSize = namePlate.name:GetFont()
+	namePlate.name:SetFont(font, nameSize, flags)
+	local layer, sublayer = namePlate.selectionHighlight:GetDrawLayer()
+	namePlate.name:SetDrawLayer(layer, sublayer+1)
+end
+
+-- Anchors and sizes. Moving regions of a protected frame is blocked in combat.
+local function ApplyGeometry(namePlate)
+	local healthBar = namePlate.healthBar
+	local castBar = namePlate.CastBarsContainer.castBar
+
+	local background = healthBar.bgTexture
 	background:ClearAllPoints()
 	background:SetAllPoints(healthBar)
 
@@ -131,11 +155,7 @@ local function Layout(namePlate)
 	castBar:SetPoint("TOPLEFT", namePlate.HealthBarsContainer, "BOTTOMLEFT", 0, -3)
 	castBar:SetPoint("TOPRIGHT", namePlate.HealthBarsContainer, "BOTTOMRIGHT", 0, -3)
 	castBar:SetHeight(3)
-	castBar.Text:SetFont(font, size*UIParent:GetScale(), flags)
 
-	namePlate.name:SetFont(font, size*UIParent:GetScale(), flags)
-	local layer, sublayer = namePlate.selectionHighlight:GetDrawLayer()
-	namePlate.name:SetDrawLayer(layer, sublayer+1)
 	namePlate.name:ClearAllPoints()
 	PixelUtil.SetPoint(namePlate.name, "BOTTOM", healthBar, "TOP", 0, -3)
 
@@ -143,23 +163,88 @@ local function Layout(namePlate)
 	auras:ClearAllPoints()
 	auras:SetPoint("BOTTOM", healthBar, "TOP", 0, 12)
 	auras:SetScale(0.85)
-
-	UpdateHealthColor(namePlate)
 end
 
-hooksecurefunc(NamePlateUnitFrameMixin, "UpdateAnchors", Layout)
+-- IsProtected can be secret; an unknown answer counts as protected
+local function GeometryIsLocked(namePlate)
+	if not InCombatLockdown() then return false end
+	local protected = namePlate.HealthBarsContainer:IsProtected()
+	return issecretvalue(protected) or protected
+end
 
--- cast bars switch art for every cast: use sInterface's texture with the classic cast colours,
--- unless the cast type is secret for this unit, in which case Blizzard's art stays
-hooksecurefunc(NamePlateCastingBarMixin, "UpdateBarFillTexture", function(castBar, isFull)
-	if castBar:IsForbidden() or issecretvalue(castBar.barType) then return end
+hooksecurefunc(NamePlateUnitFrameMixin, "UpdateAnchors", function(namePlate)
+	if namePlate:IsForbidden() then return end
+	if not styled[namePlate] then Style(namePlate) end
 
-	local info = castBar:GetTypeInfo(castBar.barType)
+	ApplyLook(namePlate)
+
+	if GeometryIsLocked(namePlate) then
+		deferred[namePlate] = true
+	else
+		deferred[namePlate] = nil
+		ApplyGeometry(namePlate)
+	end
+end)
+
+local regen = CreateFrame("Frame")
+regen:RegisterEvent("PLAYER_REGEN_ENABLED")
+regen:SetScript("OnEvent", function()
+	for namePlate in next, deferred do
+		deferred[namePlate] = nil
+		if not namePlate:IsForbidden() and namePlate.unit then
+			ApplyGeometry(namePlate)
+		end
+	end
+end)
+
+-- Cast bars switch art for every cast, delay, interrupt change and stop. sInterface's texture is
+-- used with the classic cast colours (yellow, green channel, grey uninterruptible, red failed).
+-- The cast type is secret for some units; the fill is then tinted through a boolean colour
+-- selection and Blizzard's art stays for the stop states.
+local function TintCast(castBar)
+	if castBar.reverseChanneling or not castBar.unit then return end
+
+	local notInterruptible
+	if castBar.channeling then
+		notInterruptible = select(7, UnitChannelInfo(castBar.unit))
+	else
+		notInterruptible = select(8, UnitCastingInfo(castBar.unit))
+	end
+	if not (issecretvalue(notInterruptible) or notInterruptible ~= nil) then return end
+
+	local standard = castBar:GetTypeInfo(CastingBarType.Standard)
+	local channel = castBar:GetTypeInfo(CastingBarType.Channel)
+	local uninterruptible = castBar:GetTypeInfo(CastingBarType.Uninterruptable)
+	if not (standard and channel and uninterruptible) then return end
+
+	local base = castBar.channeling and channel.classicFillColor or standard.classicFillColor
+	castBar:GetStatusBarTexture():SetVertexColorFromBoolean(notInterruptible, uninterruptible.classicFillColor, base)
+end
+
+local function StyleCastFill(castBar, isFull)
+	if castBar:IsForbidden() then return end
+
+	local barType = castBar.barType
+	if issecretvalue(barType) then
+		if not isFull then
+			castBar:SetStatusBarTexture(texture)
+			TintCast(castBar)
+		end
+		return
+	end
+
+	local info = castBar:GetTypeInfo(barType)
 	local color = info and (isFull and info.classicFullColor or info.classicFillColor)
 	if not color then return end
 
 	castBar:SetStatusBarTexture(texture)
 	castBar:SetStatusBarColor(color:GetRGB())
+end
+
+hooksecurefunc(NamePlateCastingBarMixin, "UpdateBarFillTexture", StyleCastFill)
+-- the cast state flags (casting, channeling) are set only after the first fill update
+hooksecurefunc(NamePlateCastingBarMixin, "HandleCastStart", function(castBar)
+	if not castBar:IsForbidden() and issecretvalue(castBar.barType) then TintCast(castBar) end
 end)
 
 hooksecurefunc(NamePlateAuraItemMixin, "OnLoad", function(aura)
