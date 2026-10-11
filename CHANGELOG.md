@@ -81,7 +81,11 @@ configuration and features to that client. It adds no new features.
   chat). Class-coloured names use the client setting. Shift+wheel jumps to the top or bottom,
   layered on Blizzard's scrolling. Edit Mode placement is respected.
 - **Minimap**: works with the new MinimapCluster, compass, tracking, mail, queue status and
-  difficulty frames, and keeps the square mask when the client re-applies the round one.
+  difficulty frames, and keeps the square mask when the client re-applies the round one. The
+  icons are put back in their corners whenever Blizzard re-anchors them. Forever's day/night
+  indicator and the addon compartment button are moved onto the square minimap (bottom left, and
+  below tracking). The mouse wheel uses Blizzard's own zoom. The old envelope icon is used for
+  mail if the client still has it, and Blizzard's otherwise.
 - **Nameplates**: the skin hooks the new nameplate layout (`NamePlateUnitFrameMixin`):
   texture, background tint, shadow borders, thin cast bar, name style and reaction or
   tank-threat colours.
@@ -89,8 +93,12 @@ configuration and features to that client. It adds no new features.
   max-level APIs.
 - **Cool bar**: uses `C_Spell` cooldowns. In combat, a secret cooldown is placed with a duration
   object and a curve. Fixed: the disabled list never matched.
-- **Mirror timers, talking head, objective tracker, junk seller, Details skin, order hall bar**:
+- **Mirror timers, talking head, objective tracker, junk seller, Details skin**:
   moved to their current frames and APIs. Edit Mode frames are re-anchored with their original
-  methods so Edit Mode is not tainted.
+  methods so Edit Mode is not tainted. Mirror timer bars keep their 9.x height and colours.
+  The objective tracker falls back to the minimap when the progress bars are disabled (before, it
+  raised an error).
+- **Order hall bar**: Forever has no class hall command bar, so the module has nothing to hide.
+  It now checks for the bar instead of raising an error when Blizzard_OrderHallUI loads.
 - **Errors**: the `/errors` filter unregisters UIErrorsFrame events instead of replacing its
   event handler.
