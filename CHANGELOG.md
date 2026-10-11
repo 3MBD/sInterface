@@ -24,6 +24,14 @@ configuration and features to that client. It adds no new features.
   zork), and `media/OFL-AlegreyaSans.txt` and `media/OFL-FrancoisOne.txt` (fonts). See
   `LICENSING-ISSUES.md` in the source repository for open questions.
 
+### Diagnostics
+
+- New `/sierr`: opens a box with every sInterface Lua error of this session and of the one before
+  your last reload (click in the box, Ctrl+A, Ctrl+C). `/sierr clear` empties it. Errors are kept
+  in the SavedVariable `sInterface_ErrorLog`. Every error still goes to the normal error display,
+  but an sInterface error message that was already shown once is only counted afterwards, so a
+  repeating error cannot bury the screen. Nothing is hidden: the counts are in `/sierr`.
+
 ### Unit frames (oUF 14)
 
 - Style functions take the unit from oUF. `self.unit` is no longer set because Blizzard's ping

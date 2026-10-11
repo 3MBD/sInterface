@@ -5,9 +5,11 @@
 ## Title: sInterface
 ## Notes: An opinionated UI replacement
 ## OptionalDeps: sInterface_Config
+## SavedVariables: sInterface_ErrorLog
 
 ## X-WoWI-ID: 24674
 
+diag.lua
 init.lua
 embeds\_embeds.xml
 config.default\_config.xml

@@ -65,6 +65,11 @@ Reproduce the problem, then log out. The file `World of Warcraft\_classic_beta_\
 records which addon touched what. Send the lines that mention sInterface. When you have finished,
 turn logging off again with `/console taintLog 0`, because the log grows quickly.
 
+To read the errors without the error window, type `/sierr`. It opens a box with every sInterface
+error of this session and the one before your last reload. Click in the box, press Ctrl+A and
+Ctrl+C, and paste the text to me. `/sierr clear` empties the list. An sInterface error that has
+already been shown once is only counted afterwards, so a repeating error cannot bury the screen.
+
 ## What was verified, and how
 
 Static checks, all run on the packaged files:
