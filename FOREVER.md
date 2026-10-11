@@ -171,7 +171,7 @@ fallback.
 | Chat prefixes | Lines whose text is secret (in restricted situations such as encounters) cannot be read or rewritten by any addon, so they keep Blizzard's full prefixes. |
 | Class-coloured chat names | Done by the client's own class-colour setting, which sInterface switches on, instead of by rewriting Blizzard's chat tables (that would taint chat). |
 | Order hall command bar | Forever has no command bar. The module stays enabled but has nothing to hide. |
-| Nameplate cast bar colour | When the client keeps the cast type secret, the bar keeps Blizzard's fill art for that cast instead of the sInterface colour. |
+| Nameplate cast bar colour | When the client keeps the cast type secret, the fill is coloured by a boolean colour selection (yellow, green for channels, grey if it cannot be interrupted). The finished, interrupted and failed states keep Blizzard's art instead of the sInterface red/green. |
 
 ## What I could not verify
 
