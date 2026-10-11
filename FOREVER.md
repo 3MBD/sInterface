@@ -63,7 +63,28 @@ turn logging off again with `/console taintLog 0`, because the log grows quickly
 
 ## What was verified, and how
 
-STATIC_RESULTS
+Static checks, all run on the packaged files:
+
+- **Syntax:** all 98 Lua files compile with Lua 5.1 (`luac -p`), and all 25 XML files are well
+  formed (`xmllint`).
+- **Lint:** `luacheck` 1.2.0 with a list of the globals Forever defines reports 0 warnings and 0
+  errors in the 45 sInterface files (the vendored oUF is not linted).
+- **Globals exist:** every global the addon reads was looked up in the Blizzard UI source for
+  build 70338 and in the client's API export. Each one exists on Forever, is a template or font
+  object, or is guarded by a nil check. The few that cannot be proven locally are client strings
+  (`PARAGON`, `RENOWN_LEVEL_LABEL`), the Details! addon, the load-on-demand
+  `TimeManagerClockButton` (loaded first) and `OrderHallCommandBar` (guarded).
+- **No deprecated layer:** nothing depends on the `Blizzard_Deprecated*` compatibility code, which
+  the client switches off through the `loadDeprecationFallbacks` setting. The one exception is a
+  guarded read inside the vendored oUF.
+- **Package:** the TOC loads every file it needs, no included file is missing, and the licence
+  files are present. The check reports 0 errors and 1 warning: `modules/progressbar/azerite.lua`
+  ships but is not loaded, exactly as in the original.
+- **Reviewed against the client sources:** every module was audited line by line against the
+  Blizzard UI source and the generated API documentation (frame names, mixin methods, templates,
+  secret-value flags). Unit frames and action bars were then reviewed a second time by
+  independent reviewers. The core, config, packaging and skin code did not get a separate audit
+  and was checked by hand and with the tools above.
 
 None of these checks runs the client. They cannot prove that frames look right, that secret values
 are handled correctly in every combat situation, or that nothing taints the default UI. Only the
@@ -152,4 +173,29 @@ fallback.
 | Order hall command bar | Forever has no command bar. The module stays enabled but has nothing to hide. |
 | Nameplate cast bar colour | When the client keeps the cast type secret, the bar keeps Blizzard's fill art for that cast instead of the sInterface colour. |
 
-UNCERTAINTIES
+## What I could not verify
+
+These are open until you test in the game. Each has code that handles both outcomes, so none
+should raise an error, but the look or behaviour may differ.
+
+- Whether `UnitHealth` and `UnitPower` are secret for your own character in a given situation. The
+  fade logic and bars handle both.
+- Whether the global cooldown spell (61304) is readable in combat. The GCD spark has a fallback
+  for secret values.
+- Whether the aura groups of the target and player frames can be switched in combat, and whether
+  Blizzard's "personal buffs" filter covers all the buffs you expect next to the `uf.buffs` list.
+- Whether hiding Blizzard's raid frames this way works while your own raid frames are shown.
+- The bar page numbers for vehicles, override bars, temporary shapeshifts and possession, and
+  whether Forever accepts the `[vehicleui]`, `[possessbar]` and `[overridebar]` paging conditions.
+- The cost of rewriting chat lines on a busy channel, and the default of the class-colour setting.
+- Whether Forever's two-part names (the second part is the surname, not a realm) are shown
+  everywhere as you expect.
+- Whether the old envelope icon sheet still exists on this client (Blizzard's envelope is the
+  fallback).
+- Whether Forever has arenas, which the arena frames and the trinket tracker depend on.
+- Nameplate looks: the name now sits partly behind the health bar (the old code moved it onto the
+  bar, which would hide it on name-only plates), the cast bar and icon row under the bar, and the
+  centred aura row. These need an eye-test.
+- The Details! skin. I had no Details! to test it against.
+- Taint: no frame flag is written on a Blizzard frame, but only the taint log can show whether
+  anything still taints. If you see a blocked-action message, send me the log lines.
