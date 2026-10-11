@@ -88,17 +88,27 @@ configuration and features to that client. It adds no new features.
   mail if the client still has it, and Blizzard's otherwise.
 - **Nameplates**: the skin hooks the new nameplate layout (`NamePlateUnitFrameMixin`):
   texture, background tint, shadow borders, thin cast bar, name style and reaction or
-  tank-threat colours.
-- **Progress bars**: experience and reputation use the current reputation, friendship and
-  max-level APIs.
+  tank-threat colours. Anchors and sizes wait for combat to end on plates that are protected.
+  Cast bars keep the classic colours, also when the client hides the cast type from addons (the
+  fill is then tinted through a boolean colour selection; stop states keep Blizzard's art).
+  Names are not moved onto the health bar any more, so they stay visible on name-only plates.
+  Name and cast text use sInterface's font and outline at the size Blizzard computes from the
+  nameplate size settings.
+- **Progress bars**: experience and reputation use the current reputation, friendship, renown,
+  paragon and max-level APIs. The experience bar disappears when you reach the level cap, even
+  though `UnitLevel` still reports the old level during the level-up event. The bar container
+  never gets a negative height when no bar is shown.
 - **Cool bar**: uses `C_Spell` cooldowns. In combat, a secret cooldown is placed with a duration
-  object and a curve. Fixed: the disabled list never matched.
-- **Mirror timers, talking head, objective tracker, junk seller, Details skin**:
+  object and a curve. Fixed: the disabled list never matched, because it is keyed by item name
+  and the code compared spell IDs. It now compares spell names (spell IDs work as keys too).
+- **Mirror timers, talking head, objective tracker, Details skin**:
   moved to their current frames and APIs. Edit Mode frames are re-anchored with their original
   methods so Edit Mode is not tainted. Mirror timer bars keep their 9.x height and colours.
   The objective tracker falls back to the minimap when the progress bars are disabled (before, it
   raised an error).
 - **Order hall bar**: Forever has no class hall command bar, so the module has nothing to hide.
   It now checks for the bar instead of raising an error when Blizzard_OrderHallUI loads.
-- **Errors**: the `/errors` filter unregisters UIErrorsFrame events instead of replacing its
+- **Junk seller**: uses `C_Container`, and leaves locked items alone.
+- **Errors**: the `/errors` command is registered under its own key, so it can no longer clash
+  with other addons. The filter unregisters UIErrorsFrame events instead of replacing its
   event handler.

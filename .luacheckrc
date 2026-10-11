@@ -31,7 +31,7 @@ globals = {
 	"CHAT_FLAG_GM",
 	"FloatingChatFrame_OnMouseScroll",
 	"createStatusbar",
-	"SLASH_TOGGLE1",
+	"SLASH_SINTERFACE_ERRORS1",
 	"SLASH_RELOADUI1",
 	"SlashCmdList",
 	"PetCastingBarFrame",
@@ -339,5 +339,10 @@ read_globals = {
 	"GetCVar",
 	"AddonCompartmentFrame",
 	"CastingBarType",
-	"UnitChannelInfo"
+	"UnitChannelInfo",
+	"BACKPACK_CONTAINER",
+	"C_MajorFactions",
+	"GameLimitedMode_IsActive",
+	"IsRestrictedAccount",
+	"RENOWN_LEVEL_LABEL"
 }

@@ -51,7 +51,7 @@ local function reposition()
 		end
 	end
 
-	ProgressBars:SetHeight(totalHeight + (E:C('progressbars', 'spacing') * (enabledCount - 1)))
+	ProgressBars:SetHeight(math.max(1, totalHeight + (E:C('progressbars', 'spacing') * math.max(0, enabledCount - 1))))
 end
 
 function ProgressBars:CreateBar(barName)

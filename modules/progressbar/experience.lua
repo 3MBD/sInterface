@@ -6,11 +6,20 @@ if not E:C('progressbars', 'enabled') then return end;
 local ProgressBars = ns.sInterfaceProgressBars
 local barName = "experience"
 
+-- MAX_PLAYER_LEVEL is not defined for this client; Blizzard's own XP bar uses
+-- GameRulesUtil.GetEffectiveMaxLevelForPlayer (Blizzard_SharedXML/GameRulesUtil.lua)
 local function playerMaxLevel()
-	local levelRestriction = GetRestrictedAccountData()
+	local isRestricted = (IsRestrictedAccount and IsRestrictedAccount())
+		or (GameLimitedMode_IsActive and GameLimitedMode_IsActive())
+	local levelRestriction = isRestricted and GetRestrictedAccountData() or 0
+	if levelRestriction > 0 then
+		return levelRestriction
+	end
 
-	-- MAX_PLAYER_LEVEL is not defined on current clients
-	return ((levelRestriction > 0) and levelRestriction or GameRulesUtil.GetEffectiveMaxLevelForPlayer())
+	if GameRulesUtil and GameRulesUtil.GetEffectiveMaxLevelForPlayer then
+		return GameRulesUtil.GetEffectiveMaxLevelForPlayer()
+	end
+	return GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or MAX_PLAYER_LEVEL
 end
 
 local function  getExperienceCurrent()
@@ -25,16 +34,11 @@ local function getLevel()
 	return (IsWatchingHonorAsXP() and UnitHonorLevel or UnitLevel)("player")
 end
 
--- local function getExperiencePercent()
--- 	return math.floor(getCurrentExpereience() / getExperienceMax() * 100 + 0.5)
--- end
-
 local function getRested()
-	-- honor has no rested bonus any more (GetHonorExhaustion was removed)
+	-- GetHonorExhaustion no longer exists; honor has no rested pool
 	if IsWatchingHonorAsXP() then
-		return 0
+		return GetHonorExhaustion and GetHonorExhaustion() or 0
 	end
-
 	return GetXPExhaustion() or 0
 end
 
@@ -72,9 +76,12 @@ local function Enable(bar)
 	Update(bar)
 end
 
-local function xpVisibility(self)
+local function xpVisibility(self, event, newLevel)
+	-- UnitLevel can still report the old level while PLAYER_LEVEL_UP is dispatched
+	local level = (event == "PLAYER_LEVEL_UP" and newLevel) or UnitLevel("player")
+
 	local shouldEnable = true
-	if (UnitLevel("player") == playerMaxLevel()) and (not IsWatchingHonorAsXP()) then
+	if (level >= playerMaxLevel()) and (not IsWatchingHonorAsXP()) then
 		shouldEnable = false
 	end
 
@@ -106,13 +113,15 @@ end)
 local experience = CreateFrame("StatusBar", "Experience", experienceHolder, "AnimatedStatusBarTemplate")
 experience:SetMatchBarValueToAnimation(true)
 experience:SetAllPoints(experienceHolder)
-experience:SetStatusBarTexture(E:C('general', 'texture'), "ARTWORK")
+experience:SetStatusBarTexture(E:C('general', 'texture'))
+experience:GetStatusBarTexture():SetDrawLayer("ARTWORK")
 experience:SetFrameLevel(2)
 experience:SetScript("OnEvent", Update)
 experienceHolder.Experience = experience
 
 local rested = CreateFrame("StatusBar", "ExperienceRested", experience)
-rested:SetStatusBarTexture(E:C('general', 'texture'), "ARTWORK")
+rested:SetStatusBarTexture(E:C('general', 'texture'))
+rested:GetStatusBarTexture():SetDrawLayer("ARTWORK")
 rested:SetAllPoints(experience)
 rested:SetStatusBarColor(0, 2/5, 1)
 rested:SetFrameLevel(1)
