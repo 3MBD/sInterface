@@ -82,6 +82,17 @@ function E:PlayerIsTank()
 	return assignedRole == "TANK"
 end
 
+-- Edit Mode replaces SetPoint and ClearAllPoints of its system frames (chat, objective tracker,
+-- queue button, talking head, ...) with Lua versions that record snapping state. Called from
+-- addon code those taint Edit Mode, so the original widget methods are used instead.
+function E:ClearAllPoints(frame)
+	(frame.ClearAllPointsBase or frame.ClearAllPoints)(frame)
+end
+
+function E:SetPoint(frame, ...)
+	(frame.SetPointBase or frame.SetPoint)(frame, ...)
+end
+
 function E:CommaValue(number)  -- credit http://richard.warburton.it
 	if not number then return end
 

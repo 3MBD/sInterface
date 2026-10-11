@@ -99,8 +99,8 @@ end)
 -- The general chat frame is an Edit Mode system: its position and size are owned by Edit Mode
 -- (and it is meant to stay locked), so re-apply sInterface's placement after Edit Mode applies its own.
 local function placeChatFrame1()
-	ChatFrame1:ClearAllPoints()
-	ChatFrame1:SetPoint(unpack(E:C('chat', 'position')))
+	E:ClearAllPoints(ChatFrame1)
+	E:SetPoint(ChatFrame1, unpack(E:C('chat', 'position')))
 	ChatFrame1:SetHeight(E:C('chat', 'height'))
 	ChatFrame1:SetWidth(E:C('chat', 'width'))
 end

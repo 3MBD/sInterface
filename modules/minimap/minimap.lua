@@ -97,11 +97,16 @@ tracking:SetPoint("TOPRIGHT", Minimap, 0, 0)
 tracking:SetScale(.9)
 
 -- Mail
-local mail = MinimapCluster.IndicatorFrame.MailFrame
--- keep the indicator row's automatic layout from moving the mail icon back
-mail.ignoreInLayout = true
-mail:ClearAllPoints()
-mail:SetPoint("TOPLEFT", Minimap, 0, 0)
+local indicators = MinimapCluster.IndicatorFrame
+local mail = indicators.MailFrame
+-- the indicator row lays its icons out again whenever mail arrives; move the mail icon back
+-- afterwards (flagging it ignoreInLayout would taint Blizzard's layout code)
+local function anchorMail()
+	mail:ClearAllPoints()
+	mail:SetPoint("TOPLEFT", Minimap, 0, 0)
+end
+anchorMail()
+hooksecurefunc(indicators, "Layout", anchorMail)
 mail:SetFrameStrata("LOW")
 MiniMapMailIcon:SetTexture("Interface\\Minimap\\ObjectIcons.blp")
 MiniMapMailIcon:SetTexCoord(0.875, 1, 0.25, 0.375)
@@ -109,8 +114,8 @@ MiniMapMailIcon:SetTexCoord(0.875, 1, 0.25, 0.375)
 -- Queues
 -- an Edit Mode system; Blizzard re-anchors it to the minimap whenever the layout changes
 local function anchorQueueStatusButton()
-	QueueStatusButton:ClearAllPoints()
-	QueueStatusButton:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", 0, 0)
+	E:ClearAllPoints(QueueStatusButton)
+	E:SetPoint(QueueStatusButton, "BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", 0, 0)
 end
 anchorQueueStatusButton()
 hooksecurefunc(QueueStatusButton, "UpdateDefaultAnchor", anchorQueueStatusButton)
