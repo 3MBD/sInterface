@@ -12,17 +12,16 @@ in the game yet. Please use the checklist below and send me any Lua errors you s
 | | |
 |---|---|
 | Game | World of Warcraft: Forever (product `wow_classic_beta`, codename Camelot) |
-| Version | 1.60.1 |
+| Version | 1.60.1, build 70338 (Oct 9 2026) |
 | Interface (TOC) | 16001 |
-| Blizzard UI source used | 1.60.1.70338 (Gethe/wow-ui-source, `forever` branch) |
-| Client API export used | build 70170 |
+| Blizzard UI source used | 1.60.1.70338 (Gethe/wow-ui-source, `forever` branch), the same build |
+| Client API export used | build 70170 (cross-checked against the 70338 API documentation) |
 
-To check your client, type this in chat:
+Confirmed on the user's client: `/run print(GetBuildInfo())` printed
+`1.60.1 70338 Oct 9 2026 16001`.
 
-    /run print(GetBuildInfo())
-
-It should print `1.60.1`, a build number, a date and `16001`. If the version or interface number is
-different, send me the full line before you rely on this build.
+After a client patch, run the same command again. If the version or interface number has changed,
+the addon may need another pass.
 
 ## Installing
 
@@ -135,6 +134,22 @@ Keep Lua errors on. Run `/reload` once before you start.
 - [ ] Junk seller sells grey items at a vendor.
 - [ ] Details! skin, if Details! is installed.
 
-RESTRICTED_FEATURES
+## Features that work differently on this client
+
+The client does not allow the original behaviour for these. Each one uses the closest supported
+fallback.
+
+| Feature | What changed and why |
+|---|---|
+| Player frame that follows your character (`uf.emulatePersonalResourceDisplay`) | The old code pinned the player frame to your own nameplate. On Forever the Personal Resource Display is a fixed Edit Mode frame, not a nameplate, and the click-through API is gone, so there is nothing that follows the character. The player frame stays at `uf.player.position` (by default just below the screen centre). The option is kept but has no effect. |
+| `uf.buffs` whitelist by spell name | Aura names are secret in combat, so names cannot be matched at that point. Names are turned into spell IDs at login instead. A name that your character's spellbook cannot resolve (for example another class's buff) is skipped. Use the numeric spell ID as the key for those (`[1126] = true`). |
+| Power bar on NPCs | The old code hid the power bar when a unit has no power. For NPCs the maximum power is secret and cannot be tested, so their power bar is always shown (empty when they have no power). Player-controlled units still hide it. |
+| Player frame fade | It still fades out of combat at full health. If the client ever makes your own health secret, the frame stays visible instead of fading, because the "full health" test cannot be made. |
+| Arena enemy specialization text | `[arenaspec]` is always secret, and Forever has no specializations. Arena frames show the name instead. |
+| Arena trinket tracking | The combat log is not available to addons. The trinket icon uses the arena crowd-control API instead. |
+| Chat prefixes | Lines whose text is secret (in restricted situations such as encounters) cannot be read or rewritten by any addon, so they keep Blizzard's full prefixes. |
+| Class-coloured chat names | Done by the client's own class-colour setting, which sInterface switches on, instead of by rewriting Blizzard's chat tables (that would taint chat). |
+| Order hall command bar | Forever has no command bar. The module stays enabled but has nothing to hide. |
+| Nameplate cast bar colour | When the client keeps the cast type secret, the bar keeps Blizzard's fill art for that cast instead of the sInterface colour. |
 
 UNCERTAINTIES
