@@ -3,6 +3,13 @@ local E = ns.E
 
 if not E:C('nameplates', 'enabled') then return end;
 
+-- Nameplates are built by Blizzard_NamePlates (NamePlateUnitFrameMixin), which lays them out
+-- again whenever an option, style or CVar changes. The skin is therefore applied from
+-- post-hooks on those layout functions instead of the old DefaultCompactNamePlate* setup
+-- functions, and it never writes to Blizzard's tables.
+
+local issecretvalue = issecretvalue or function() return false end
+
 local colours = {
 	secure = {  0.2, 0.8, 0.1 },
 	insecure = { 1, 1, 0.3},
@@ -16,106 +23,148 @@ for eclass, color in next, FACTION_BAR_COLORS do
 	colours.reaction[eclass] = {color.r, color.g, color.b}
 end
 
-local sPlates = CreateFrame("FRAME")
+local texture = E:C('general', 'texture')
+local styled = setmetatable({}, { __mode = "k" })
 
-function sPlates:NAME_PLATE_UNIT_ADDED(...)
-	local namePlateUnitToken = ...
-	local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(namePlateUnitToken, issecure());
-
-	if not namePlateFrameBase then return end
-
-	local namePlate = namePlateFrameBase.UnitFrame
-
-	local castBar = namePlate.castBar
-	castBar:SetStatusBarTexture(E:C('general', 'texture'))
-	castBar:SetHeight(3)
-
-	local healthBar = namePlate.healthBar
-	if healthBar == nil or healthBar:IsForbidden() or UnitAffectingCombat("player") then return end
-	healthBar:SetPoint("BOTTOMLEFT", castBar, "TOPLEFT", 0, 3)
-	healthBar:SetPoint("BOTTOMRIGHT", castBar, "TOPRIGHT", 0, 3)
+-- compact unit frame functions also run for party and raid frames
+local function IsNamePlate(frame)
+	return not frame:IsForbidden() and frame.HealthBarsContainer ~= nil
 end
 
-hooksecurefunc("CompactUnitFrame_UpdateAggroFlash", function(frame)
-	if frame:IsForbidden() then return end
-	if UnitIsPlayer(frame.unit) then return end
-
-	local status = UnitThreatSituation("player", frame.unit)
-	local r, g, b
-	if (not (E:C('nameplates', 'tankMode') and E:PlayerIsTank())) or (status == nil) then
-		local reaction = colours.reaction[UnitReaction(frame.unit, "player")]
-		if not reaction then return end
-		r, g, b = unpack(reaction)
-	elseif status == 3 then
-		r, g, b = unpack(colours.secure)
-	elseif status == 2 then
-		r, g, b = unpack(colours.insecure)
+-- background = bar colour * multiplier; secret colours (e.g. secret class colours) cannot be
+-- multiplied, so they are darkened through alpha instead
+local function TintBackground(healthBar, r, g, b)
+	local background = healthBar.bgTexture
+	if issecretvalue(r) or issecretvalue(g) or issecretvalue(b) then
+		background:SetVertexColor(r, g, b, multiplier)
 	else
-		r, g, b = unpack(colours.na)
+		background:SetVertexColor(r*multiplier, g*multiplier, b*multiplier, 1)
 	end
-	if frame.healthBar.barTexture then
-		frame.healthBar.barTexture:SetVertexColor (r, g, b)
-		frame.healthBar.background:SetVertexColor(r*multiplier, g*multiplier, b*multiplier, 1)
-	end
-end)
+end
 
-hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
-	if frame:IsForbidden() then return end
-	local r, g, b = frame.healthBar:GetStatusBarColor()
-	frame.healthBar.background:SetVertexColor(r*multiplier, g*multiplier, b*multiplier, 1)
-end)
+-- reaction colours, or threat colours for tanks; Blizzard keeps colouring players
+local function UpdateHealthColor(frame)
+	if not IsNamePlate(frame) or not frame.unit then return end
 
-hooksecurefunc(NameplateBuffContainerMixin, "UpdateAnchor", function(self)
-	if self:IsForbidden() then return end
-	self:SetPoint("BOTTOM", self:GetParent().healthBar, "TOP", 0, 12);
-	self:SetScale(0.85)
-	local font, size, flags = GameFontNormalOutline:GetFont()
-	for _, buff in ipairs(self.buffList) do
-		buff.CountFrame.Count:SetFont(font, size, flags)
-		buff.CountFrame:SetPoint("BOTTOMRIGHT", 2, -2)
+	if not UnitIsPlayer(frame.unit) then
+		local status = UnitThreatSituation("player", frame.unit)
+		if issecretvalue(status) then status = nil end
+
+		local r, g, b
+		if (not (E:C('nameplates', 'tankMode') and E:PlayerIsTank())) or (status == nil) then
+			local reaction = UnitReaction(frame.unit, "player")
+			reaction = not issecretvalue(reaction) and colours.reaction[reaction]
+			if reaction then
+				r, g, b = unpack(reaction)
+			end
+		elseif status == 3 then
+			r, g, b = unpack(colours.secure)
+		elseif status == 2 then
+			r, g, b = unpack(colours.insecure)
+		else
+			r, g, b = unpack(colours.na)
+		end
+
+		if r then
+			frame.healthBar:SetStatusBarColor(r, g, b)
+		end
 	end
-end)
+
+	TintBackground(frame.healthBar, frame.healthBar:GetStatusBarColor())
+end
+
+-- threat updates run the aggro flash first and Blizzard's health colour afterwards, so both
+-- are hooked to keep these colours on top
+hooksecurefunc("CompactUnitFrame_UpdateAggroFlash", UpdateHealthColor)
+hooksecurefunc("CompactUnitFrame_UpdateHealthColor", UpdateHealthColor)
 
 hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
-	if frame:IsForbidden() then return end
+	if not IsNamePlate(frame) or not frame.unit then return end
 	if UnitIsPlayer(frame.unit) then
 		frame.name:SetText(UnitName(frame.unit))
 	end
 	frame.name:SetTextColor(1, 1, 1, 1)
 end)
 
-hooksecurefunc("DefaultCompactNamePlateFrameSetupInternal", function(namePlate)
-	if namePlate.styled or namePlate:IsForbidden() then return end
-	namePlate.healthBar:SetStatusBarTexture(E:C('general', 'texture'))
-	namePlate.healthBar.background:SetTexture(E:C('general', 'texture'))
-	namePlate.healthBar.border:Hide()
+-- once per pooled nameplate
+local function Style(namePlate)
+	local healthBar = namePlate.healthBar
+	local castBar = namePlate.CastBarsContainer.castBar
 
-	E:ShadowedBorder(namePlate.healthBar)
-	local font, size, flags = GameFontNormalOutline:GetFont()
+	-- the target/selection borders replaced the old nameplate border, which sInterface hid
+	healthBar.selectedBorder:SetAlpha(0)
+	healthBar.deselectedOverlay:SetAlpha(0)
+	E:ShadowedBorder(healthBar)
 
-	namePlate.castBar.Flash:SetTexture(nil)
-	namePlate.castBar.background:SetAlpha(0.3)
-	namePlate.castBar.Text:SetFont(font, size*UIParent:GetScale(), flags)
-	namePlate.castBar.Icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
-	E:ShadowedBorder(namePlate.castBar)
-	E:ShadowedBorder(namePlate.castBar.Icon)
+	castBar.Border:SetAlpha(0)
+	castBar.Background:SetAlpha(0.3)
+	castBar.Icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+	E:ShadowedBorder(castBar)
+	E:ShadowedBorder(castBar.Icon)
 
-	namePlate.name:SetFont(font, size*UIParent:GetScale(), flags)
-	namePlate.name:SetParent(namePlate.healthBar)
-	local layer, sublayer = namePlate.selectionHighlight:GetDrawLayer()
-	namePlate.name:SetDrawLayer(layer, sublayer+1)
-
+	namePlate.name:SetParent(healthBar)
 	namePlate.selectionHighlight:SetAlpha(0)
 
-	namePlate.styled = true
-end)
+	styled[namePlate] = true
+end
 
-hooksecurefunc("DefaultCompactNamePlateFrameAnchorInternal", function(namePlate)
+-- every layout pass resets textures, fonts and anchors
+local function Layout(namePlate)
 	if namePlate:IsForbidden() then return end
-	PixelUtil.SetPoint(namePlate.name, "BOTTOM", namePlate.healthBar, "TOP", 0, -3)
+	if not styled[namePlate] then Style(namePlate) end
+
+	local healthBar = namePlate.healthBar
+	local castBar = namePlate.CastBarsContainer.castBar
+	local font, size, flags = GameFontNormalOutline:GetFont()
+
+	healthBar:SetStatusBarTexture(texture)
+	local background = healthBar.bgTexture
+	background:SetTexture(texture)
+	background:SetTextureSliceMargins(0, 0, 0, 0)
+	background:SetTexCoord(0, 1, 0, 1)
+	background:SetDrawLayer("BACKGROUND")
+	background:ClearAllPoints()
+	background:SetAllPoints(healthBar)
+
+	-- a thin cast bar just below the health bar
+	castBar:ClearAllPoints()
+	castBar:SetPoint("TOPLEFT", namePlate.HealthBarsContainer, "BOTTOMLEFT", 0, -3)
+	castBar:SetPoint("TOPRIGHT", namePlate.HealthBarsContainer, "BOTTOMRIGHT", 0, -3)
+	castBar:SetHeight(3)
+	castBar.Text:SetFont(font, size*UIParent:GetScale(), flags)
+
+	namePlate.name:SetFont(font, size*UIParent:GetScale(), flags)
+	local layer, sublayer = namePlate.selectionHighlight:GetDrawLayer()
+	namePlate.name:SetDrawLayer(layer, sublayer+1)
+	namePlate.name:ClearAllPoints()
+	PixelUtil.SetPoint(namePlate.name, "BOTTOM", healthBar, "TOP", 0, -3)
+
+	local auras = namePlate.AurasFrame.DebuffListFrame
+	auras:ClearAllPoints()
+	auras:SetPoint("BOTTOM", healthBar, "TOP", 0, 12)
+	auras:SetScale(0.85)
+
+	UpdateHealthColor(namePlate)
+end
+
+hooksecurefunc(NamePlateUnitFrameMixin, "UpdateAnchors", Layout)
+
+-- cast bars switch art for every cast: use sInterface's texture with the classic cast colours,
+-- unless the cast type is secret for this unit, in which case Blizzard's art stays
+hooksecurefunc(NamePlateCastingBarMixin, "UpdateBarFillTexture", function(castBar, isFull)
+	if castBar:IsForbidden() or issecretvalue(castBar.barType) then return end
+
+	local info = castBar:GetTypeInfo(castBar.barType)
+	local color = info and (isFull and info.classicFullColor or info.classicFillColor)
+	if not color then return end
+
+	castBar:SetStatusBarTexture(texture)
+	castBar:SetStatusBarColor(color:GetRGB())
 end)
 
-sPlates:SetScript("OnEvent", function(self, event, ...)
-	self[event](self, ...); -- call one of the functions above
-end);
-sPlates:RegisterEvent("NAME_PLATE_UNIT_ADDED");
+hooksecurefunc(NamePlateAuraItemMixin, "OnLoad", function(aura)
+	if aura:IsForbidden() then return end
+	local font, size, flags = GameFontNormalOutline:GetFont()
+	aura.CountFrame.Count:SetFont(font, size, flags)
+	aura.CountFrame:SetPoint("BOTTOMRIGHT", 2, -2)
+end)
